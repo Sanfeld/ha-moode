@@ -1,0 +1,174 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Add a moOde box",
+        "description": "moOde boxes on your network are found automatically. Use this to add one by IP address or hostname instead.",
+        "data": {
+          "host": "IP address or hostname",
+          "name": "Name (optional)"
+        }
+      },
+      "discovery_confirm": {
+        "title": "moOde box found",
+        "description": "Add **{name}** ({host}) to Home Assistant?",
+        "data": {
+          "name": "Name"
+        }
+      },
+      "reconfigure": {
+        "title": "Change address",
+        "data": {
+          "host": "IP address or hostname"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Couldn't reach moOde at that address. Check the IP/hostname and that the box is on."
+    },
+    "abort": {
+      "already_configured": "This moOde box is already set up.",
+      "not_moode": "The discovered device isn't a moOde player.",
+      "ipv6_not_supported": "IPv6 discovery is not supported.",
+      "reconfigure_successful": "Address updated."
+    }
+  },
+  "entity": {
+    "switch": {
+      "receiver": {
+        "name": "Multiroom receiver"
+      }
+    },
+    "select": {
+      "favourite": {
+        "name": "Favourite station"
+      },
+      "sleep_timer": {
+        "name": "Sleep timer"
+      },
+      "room_mode": {
+        "name": "Room mode"
+      },
+      "room_station": {
+        "name": "Room station"
+      },
+      "all_stations": {
+        "name": "All stations"
+      },
+      "amp_input": {
+        "name": "Amplifier input"
+      },
+      "recent": {
+        "name": "Recently played"
+      }
+    },
+    "button": {
+      "play_favourite": {
+        "name": "Play {station}"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "moOde settings",
+        "menu_options": {
+          "zone": "Multiroom zone",
+          "favourites": "Favourite stations",
+          "sleep": "Sleep timer",
+          "announce": "Announcements",
+          "volume": "Volume control",
+          "amplifier": "Amplifier"
+        }
+      },
+      "zone": {
+        "title": "Multiroom zone",
+        "description": "Make **{box}** a zone sender by picking the receivers that play along with it. Leave empty if this box isn't a sender. Each receiver must have *Multiroom → Receiver* enabled in its own moOde settings.",
+        "data": {
+          "zone_name": "Zone name",
+          "receivers": "Receivers in this zone"
+        }
+      },
+      "favourites": {
+        "title": "Favourite stations",
+        "description": "Pick the radio stations you want as one-tap favourites on **{box}**. Each one becomes a button entity (great for NSPanels and dashboards), plus a *Favourite station* dropdown. If this box is a zone sender, favourites play on the whole zone.",
+        "data": {
+          "favourites": "Favourite stations",
+          "favourites_wake_zone": "If no room is listening, switch the zone's rooms on when a favourite is pressed"
+        }
+      },
+      "sleep": {
+        "title": "Sleep timer",
+        "description": "What happens when the sleep timer runs out. Fade-out only works on boxes with variable volume (it's skipped at fixed volume). A receiver's sleep timer simply takes it out of its zone.",
+        "data": {
+          "sleep_action": "When the timer ends",
+          "sleep_fade": "Fade out first",
+          "sleep_fade_seconds": "Fade-out time (seconds)"
+        }
+      },
+      "announce": {
+        "title": "Announcements",
+        "description": "Settings for announcements (text-to-speech via `tts.speak`, or `media_player.play_media` with *announce*).",
+        "data": {
+          "announce_resume": "Resume what was playing afterwards",
+          "announce_all_rooms": "Play in all rooms of the zone (switch receivers on temporarily)",
+          "announce_lead_in": "Lead-in before speaking (seconds, lets receivers catch up)",
+          "announce_max_seconds": "Maximum announcement length (seconds)"
+        }
+      },
+      "volume": {
+        "title": "Volume control",
+        "description": "Choose *Fixed* if an amplifier controls the volume (moOde set to Fixed 0dB): the volume slider and mute are hidden. *Variable* always shows them. *Auto* guesses from MPD.",
+        "data": {
+          "volume_mode": "Volume control"
+        }
+      },
+      "amplifier": {
+        "title": "Amplifier",
+        "description": "The amplifier or receiver this box is plugged into. The dashboard then shows its power, volume and input next to the box. Leave empty if there's none.",
+        "data": {
+          "amplifier": "Amplifier"
+        }
+      }
+    },
+    "error": {
+      "already_in_zone": "One of the selected boxes is already a receiver in {conflict}'s zone. Remove it there first.",
+      "is_receiver_in_zone": "{box} is itself a receiver in {conflict}'s zone, so it can't be a sender.",
+      "box_is_receiver": "{box} is set up as a multiroom receiver in moOde. Set it to sender in moOde's Multiroom settings first.",
+      "not_receiver": "{conflict} doesn't have the multiroom receiver enabled in moOde. Turn it on in that box's moOde Multiroom settings first."
+    },
+    "abort": {
+      "no_stations": "Couldn't read radio stations from this moOde box. Check it's online."
+    }
+  },
+  "selector": {
+    "sleep_action": {
+      "options": {
+        "stop": "Stop playback",
+        "zone_off": "Stop and switch the zone's receivers off"
+      }
+    },
+    "volume_mode": {
+      "options": {
+        "auto": "Auto-detect",
+        "fixed": "Fixed – an amp controls the volume",
+        "variable": "Variable – control volume here"
+      }
+    }
+  },
+  "issues": {
+    "box_offline": {
+      "title": "{box} is offline",
+      "description": "Home Assistant hasn't been able to reach the moOde box **{box}** ({host}) for over two minutes. Check that it's powered on and its network cable is connected. This warning clears itself as soon as the box answers again."
+    },
+    "no_internet": {
+      "title": "{box} can't reach the internet",
+      "description": "The moOde box **{box}** ({host}) failed to open a radio stream because it couldn't connect to the station's server. Local control still works, but internet radio won't play on this box. Common causes: the box is also connected to a Wi-Fi network without internet access (turn Wi-Fi off on wired boxes), or its gateway/DNS settings are wrong (moOde → Configure → Network). This warning clears itself when the box plays a stream again."
+    },
+    "receiver_disabled": {
+      "title": "{box} isn't a receiver in moOde",
+      "description": "**{box}** is part of the **{zone}** zone in Home Assistant, but its multiroom receiver is disabled in moOde, so it can't play along with the zone. Enable it in that box's moOde web page (Configure → Multiroom → Receiver), or remove it from the zone under moOde Audio → {zone} → Configure → Multiroom zone."
+    }
+  }
+}

@@ -1,0 +1,109 @@
+blueprint:
+  name: moOde – Amps follow zone
+  description: >
+    Switches amplifiers/receivers on when a moOde zone (or player) starts, and off
+    again after it has been quiet for a while. Turn this automation off to pause the
+    behaviour without losing its settings.
+  domain: automation
+  source_url: https://github.com/Sanfeld/ha-moode/blob/main/blueprints/automation/moode/amps_follow_zone.yaml
+  input:
+    zone:
+      name: moOde zone or player
+      selector:
+        entity:
+          filter:
+            - integration: moode
+              domain: media_player
+    amps:
+      name: Amplifiers
+      description: Receivers, amps, smart plugs or Harmony activities to switch.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: [media_player, switch, light, input_boolean, remote, script, scene]
+    on_when:
+      name: Switch amps on when
+      default: zone_on
+      selector:
+        select:
+          options:
+            - label: The zone is switched on (any room) or playing
+              value: zone_on
+            - label: Music is actually playing
+              value: playing
+    amp_source:
+      name: Input source on the amp (optional)
+      description: Selected on media_player amps after power-on, e.g. "NET", "AUX", "TV/CD". Leave empty to keep the current input.
+      default: ""
+      selector:
+        text: {}
+    off_delay:
+      name: Switch off after quiet for
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+    turn_off:
+      name: Switch amps off again
+      default: true
+      selector:
+        boolean: {}
+
+mode: restart
+
+trigger_variables:
+  zone_e: !input zone
+  on_mode: !input on_when
+
+triggers:
+  - trigger: template
+    id: "on"
+    value_template: >
+      {% set s = states(zone_e) %}
+      {{ s == 'playing' if on_mode == 'playing' else s not in ['off', 'unavailable', 'unknown'] }}
+  - trigger: template
+    id: "off"
+    value_template: >
+      {% set s = states(zone_e) %}
+      {{ not (s == 'playing' if on_mode == 'playing' else s not in ['off', 'unavailable', 'unknown']) }}
+    for:
+      minutes: !input off_delay
+
+variables:
+  amps: !input amps
+  amp_source: !input amp_source
+  turn_off: !input turn_off
+  media_amps: "{{ amps | select('match', 'media_player\\.') | list }}"
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: "on"
+        sequence:
+          - action: homeassistant.turn_on
+            target:
+              entity_id: !input amps
+          - if:
+              - condition: template
+                value_template: "{{ amp_source | length > 0 and media_amps | length > 0 }}"
+            then:
+              - delay: 3
+              - action: media_player.select_source
+                continue_on_error: true
+                target:
+                  entity_id: "{{ media_amps }}"
+                data:
+                  source: "{{ amp_source }}"
+      - conditions:
+          - condition: trigger
+            id: "off"
+          - condition: template
+            value_template: "{{ turn_off }}"
+        sequence:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: !input amps

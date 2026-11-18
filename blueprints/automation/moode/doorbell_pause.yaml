@@ -1,0 +1,107 @@
+blueprint:
+  name: moOde – Pause music when the doorbell rings
+  description: >
+    Pauses moOde players/zones when a doorbell rings, optionally speaks an
+    announcement, and resumes after a delay. Turn this automation off to disable it.
+  domain: automation
+  source_url: https://github.com/Sanfeld/ha-moode/blob/main/blueprints/automation/moode/doorbell_pause.yaml
+  input:
+    doorbells:
+      name: Doorbells
+      description: Doorbell "ding" binary sensors or doorbell event entities.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: [binary_sensor, event]
+    players:
+      name: moOde zones / players to pause
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: moode
+              domain: media_player
+    resume:
+      name: Resume afterwards
+      default: true
+      selector:
+        boolean: {}
+    resume_after:
+      name: Resume after
+      default: 60
+      selector:
+        number:
+          min: 5
+          max: 600
+          unit_of_measurement: s
+    tts_engine:
+      name: Announcement voice (optional)
+      description: A text-to-speech engine. Leave empty for no announcement.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: tts
+    message:
+      name: Announcement text
+      default: "Someone is at the door."
+      selector:
+        text: {}
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input doorbells
+
+conditions:
+  - condition: template
+    value_template: >
+      {{ trigger.from_state is not none and trigger.to_state is not none
+         and trigger.from_state.state not in ['unavailable', 'unknown']
+         and (trigger.to_state.domain == 'event' or trigger.to_state.state == 'on') }}
+
+variables:
+  players: !input players
+  tts_engine: !input tts_engine
+  message: !input message
+  resume: !input resume
+  was_playing: "{{ players | select('is_state', 'playing') | list }}"
+
+actions:
+  - if:
+      - condition: template
+        value_template: "{{ was_playing | length > 0 }}"
+    then:
+      - action: media_player.media_pause
+        target:
+          entity_id: "{{ was_playing }}"
+  - if:
+      - condition: template
+        value_template: "{{ tts_engine | length > 0 and message | length > 0 }}"
+    then:
+      - action: media_player.play_media
+        continue_on_error: true
+        target:
+          entity_id: "{{ players }}"
+        data:
+          media_content_type: music
+          media_content_id: "media-source://tts/{{ tts_engine }}?message={{ message | urlencode }}"
+          announce: true
+  - if:
+      - condition: template
+        value_template: "{{ resume and was_playing | length > 0 }}"
+    then:
+      - delay:
+          seconds: !input resume_after
+      - variables:
+          to_resume: "{{ was_playing | reject('is_state', 'playing') | list }}"
+      - if:
+          - condition: template
+            value_template: "{{ to_resume | length > 0 }}"
+        then:
+          - action: media_player.media_play
+            target:
+              entity_id: "{{ to_resume }}"

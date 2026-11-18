@@ -1,0 +1,133 @@
+blueprint:
+  name: moOde – Morning radio
+  description: >
+    Starts a favourite station at a set time on chosen days, optionally only when
+    someone is home, switches the zone on, sets the volume and stops after a while.
+    Turn this automation off to skip mornings without losing the settings.
+  domain: automation
+  source_url: https://github.com/Sanfeld/ha-moode/blob/main/blueprints/automation/moode/morning_radio.yaml
+  input:
+    station:
+      name: Station
+      description: One of your moOde favourite-station buttons (set favourites under the moOde integration → Configure).
+      selector:
+        entity:
+          filter:
+            - integration: moode
+              domain: button
+    player:
+      name: Zone or player
+      description: Used to switch the zone on, set volume and stop. Pick the zone player to wake all its rooms.
+      selector:
+        entity:
+          filter:
+            - integration: moode
+              domain: media_player
+    start_time:
+      name: Time
+      default: "07:00:00"
+      selector:
+        time: {}
+    days:
+      name: Days
+      default: [mon, tue, wed, thu, fri]
+      selector:
+        select:
+          multiple: true
+          options:
+            - { label: Monday, value: mon }
+            - { label: Tuesday, value: tue }
+            - { label: Wednesday, value: wed }
+            - { label: Thursday, value: thu }
+            - { label: Friday, value: fri }
+            - { label: Saturday, value: sat }
+            - { label: Sunday, value: sun }
+    presence:
+      name: Only when home (optional)
+      description: People or zones; radio only starts if at least one is home. Leave empty to always play.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: [person, zone, device_tracker, binary_sensor]
+    skip_if_playing:
+      name: Don't interrupt music that's already playing
+      default: true
+      selector:
+        boolean: {}
+    volume:
+      name: Volume
+      description: 0 leaves the volume alone (use 0 for boxes on fixed volume).
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+    play_for:
+      name: Stop after
+      description: 0 keeps playing.
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 480
+          unit_of_measurement: min
+
+mode: single
+
+triggers:
+  - trigger: time
+    at: !input start_time
+
+conditions:
+  - condition: time
+    weekday: !input days
+  - condition: template
+    value_template: >
+      {% set p = presence %}
+      {{ p | length == 0 or p | select('is_state', ['home', 'on']) | list | length > 0
+         or p | select('match', 'zone\.') | map('states') | map('int', 0) | sum > 0 }}
+  - condition: template
+    value_template: "{{ not (skip and is_state(player, 'playing')) }}"
+
+variables:
+  presence: !input presence
+  skip: !input skip_if_playing
+  player: !input player
+  volume: !input volume
+  play_for: !input play_for
+
+actions:
+  - action: media_player.turn_on
+    continue_on_error: true
+    target:
+      entity_id: !input player
+  - if:
+      - condition: template
+        value_template: "{{ volume | int(0) > 0 }}"
+    then:
+      - action: media_player.volume_set
+        continue_on_error: true
+        target:
+          entity_id: !input player
+        data:
+          volume_level: "{{ volume | int / 100 }}"
+  - action: button.press
+    target:
+      entity_id: !input station
+  - if:
+      - condition: template
+        value_template: "{{ play_for | int(0) > 0 }}"
+    then:
+      - delay:
+          minutes: "{{ play_for | int }}"
+      - action: media_player.turn_off
+        continue_on_error: true
+        target:
+          entity_id: !input player
+      - action: media_player.media_stop
+        continue_on_error: true
+        target:
+          entity_id: !input player
