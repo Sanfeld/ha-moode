@@ -9,6 +9,7 @@ Two channels are used:
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 from dataclasses import dataclass, field
@@ -150,6 +151,19 @@ def split_command_list(lines: list[str]) -> list[list[str]]:
     if not blocks[-1]:
         blocks.pop()
     return blocks
+
+
+def _unescape(val: Any) -> str | None:
+    """Undo HTML escaping in moOde metadata (sometimes applied twice)."""
+    if val is None:
+        return None
+    text = str(val)
+    for _ in range(2):
+        clean = html.unescape(text)
+        if clean == text:
+            break
+        text = clean
+    return text
 
 
 def _float(v: Any) -> float | None:
@@ -692,9 +706,10 @@ class MoodeClient:
         meta = await self.get_currentsong()
         if meta:
             st.raw = meta
-            st.title = meta.get("title") or st.title
-            st.artist = meta.get("artist") or st.artist
-            st.album = meta.get("album") or st.album
+            # moOde's REST metadata is HTML-escaped ("Push &amp; Shove")
+            st.title = _unescape(meta.get("title")) or st.title
+            st.artist = _unescape(meta.get("artist")) or st.artist
+            st.album = _unescape(meta.get("album")) or st.album
             st.file = meta.get("file") or st.file
             if not mpd_ok and meta.get("state"):
                 st.state = str(meta["state"])
@@ -706,7 +721,7 @@ class MoodeClient:
             # Radio: moOde reports artist="Radio station", title="Artist - Track",
             # and the station name in album.
             if st.artist and st.artist.strip().lower() == "radio station":
-                st.station = st.station or meta.get("album")
+                st.station = st.station or _unescape(meta.get("album"))
                 left, sep, right = (st.title or "").partition(" - ")
                 if sep and left.strip() and right.strip():
                     st.artist, st.title = left.strip(), right.strip()

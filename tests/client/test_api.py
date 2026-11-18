@@ -368,6 +368,29 @@ def test_radio_artist_title_split():
     assert st.station == "SomaFM Groove Salad"  # MPD Name wins when present
 
 
+def test_html_escaped_metadata_is_cleaned():
+    box = FakeMoode()
+    orig = box.rest
+
+    def rest(cmd):
+        if cmd == "get_currentsong":
+            return json.dumps({"file": box.file, "artist": "Radio station",
+                               "title": "Mike Z Band - Push &amp; Shove",
+                               "album": "Rock &amp;amp; Roll FM", "state": "play"})
+        return orig(cmd)
+    box.rest = rest
+
+    async def go():
+        server, c = await make(box)()
+        async with server:
+            return await c.fetch_state()
+
+    st = run(go())
+    assert (st.artist, st.title) == ("Mike Z Band", "Push & Shove")
+    assert api._unescape("Rock &amp;amp; Roll") == "Rock & Roll"
+    assert api._unescape("AT&T 5 < 6") == "AT&T 5 < 6"
+
+
 def test_fixed_volume_detected():
     box = FakeMoode()
 

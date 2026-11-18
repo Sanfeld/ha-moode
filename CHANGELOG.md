@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 (2026-11-18)
+
+- Song titles, artists and station names with "&" no longer show as "&amp;amp;"
+- README: dashboard screenshot
+
 ## 1.0.1 (2026-11-18)
 
 - Stations tab keeps your view (box, filter, search) when you star or unstar a station,
