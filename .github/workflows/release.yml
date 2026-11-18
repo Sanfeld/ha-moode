@@ -1,8 +1,12 @@
 name: Release
 
+# Creates the GitHub release (and its tag) automatically when the version in
+# manifest.json changes on main. Release notes come from CHANGELOG.md.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: ["custom_components/moode/manifest.json", ".github/workflows/release.yml"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,18 +18,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check tag matches manifest version
+      - name: Read version
+        id: v
+        run: echo "version=$(jq -r .version custom_components/moode/manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already released
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          manifest=$(jq -r .version custom_components/moode/manifest.json)
-          if [ "$tag" != "$manifest" ]; then
-            echo "::error::Tag v$tag does not match manifest version $manifest"
-            exit 1
+          if gh release view "v${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
+            echo "Release v${{ steps.v.outputs.version }} already exists"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Extract release notes from CHANGELOG.md
+        if: steps.exists.outputs.skip != 'true'
         run: |
-          awk -v v="${GITHUB_REF_NAME#v}" '
+          awk -v v="${{ steps.v.outputs.version }}" '
             $0 ~ "^## " v { found=1; next }
             found && /^## / { exit }
             found { print }
@@ -33,6 +43,11 @@ jobs:
           cat notes.md
 
       - name: Create release
+        if: steps.exists.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+        run: |
+          gh release create "v${{ steps.v.outputs.version }}" \
+            --target "$GITHUB_SHA" \
+            --title "v${{ steps.v.outputs.version }}" \
+            --notes-file notes.md
