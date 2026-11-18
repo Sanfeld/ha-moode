@@ -13,7 +13,38 @@
 
 const DOMAIN = "moode";
 
+// Which parts of the moOde entities' state the dashboard depends on: whether each
+// entity is usable, and each favourite's logo and name. Cached per registry object
+// so the check on every state change only touches moOde entities.
+const _moodeIds = new WeakMap();
+function moodeEntities(hass) {
+  let list = _moodeIds.get(hass.entities);
+  if (!list) {
+    list = Object.values(hass.entities || {})
+      .filter((e) => e.platform === DOMAIN)
+      .map((e) => [e.entity_id, e.translation_key === "play_favourite"]);
+    _moodeIds.set(hass.entities, list);
+  }
+  return list;
+}
+function dashboardSignature(hass) {
+  return moodeEntities(hass).map(([id, fav]) => {
+    const s = hass.states[id];
+    const ok = !s ? "-" : s.state === "unavailable" ? "u" : "a";
+    return fav && s ? `${id}:${ok}:${s.attributes.entity_picture || ""}:${s.attributes.friendly_name || ""}` : `${id}:${ok}`;
+  }).join("|");
+}
+
 class MoodeMusicStrategy extends HTMLElement {
+  // HA normally rebuilds a generated dashboard only when the registries change.
+  // A new favourite is registered before it has a state, so we also rebuild when a
+  // moOde entity becomes (un)available or a favourite's logo/name changes.
+  static shouldRegenerate(config, oldHass, newHass) {
+    if (["entities", "devices", "areas", "floors"].some((k) => oldHass[k] !== newHass[k])) return true;
+    if (oldHass.states === newHass.states) return false;
+    return dashboardSignature(oldHass) !== dashboardSignature(newHass);
+  }
+
   static async generate(config, hass) {
     const ents = Object.values(hass.entities || {}).filter(
       (e) => e.platform === DOMAIN && !e.hidden

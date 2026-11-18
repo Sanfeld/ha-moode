@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3 (2026-11-18)
+
+- Dashboard: newly starred favourites appear right away, and logo or name changes show
+  without reloading the page
+
 ## 1.0.2 (2026-11-18)
 
 - Song titles, artists and station names with "&" no longer show as "&amp;amp;"
