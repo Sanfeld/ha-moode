@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-11-18)
+
+- Stations tab keeps your view (box, filter, search) when you star or unstar a station,
+  instead of jumping back to the full list
+
 ## 1.0.0 (2026-11-18)
 
 First public release.

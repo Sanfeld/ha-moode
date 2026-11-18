@@ -48,6 +48,12 @@ const EMBED_STYLE = `
 .wrap { padding:0 12px 12px; }
 `;
 
+// The self-building dashboard re-creates this card whenever the favourites
+// change (a star adds/removes a favourite button). Keep the view the user had
+// (box, filter, search, tab) for the life of the page, so it survives that.
+const VIEW = {};
+const VIEW_KEYS = ["entry", "show", "filter", "tab"];
+
 class MoodeStationsPanel extends HTMLElement {
   constructor() {
     super();
@@ -56,7 +62,10 @@ class MoodeStationsPanel extends HTMLElement {
       boxes: [], entry: null, stations: [], status: {}, filter: "", show: "all",
       sel: new Set(), tab: "mine", results: [], added: new Set(), busy: "", syncOpen: false,
     };
+    VIEW_KEYS.forEach((k) => { if (VIEW[k] !== undefined) this.s[k] = VIEW[k]; });
   }
+
+  saveView() { VIEW_KEYS.forEach((k) => { VIEW[k] = this.s[k]; }); }
 
   set hass(h) {
     const first = !this._hass;
@@ -77,7 +86,7 @@ class MoodeStationsPanel extends HTMLElement {
     this.render();
     try {
       this.s.boxes = await this.ws("moode/boxes");
-      this.s.entry = this.s.boxes[0]?.entry_id || null;
+      if (!this.s.boxes.some((b) => b.entry_id === this.s.entry)) this.s.entry = this.s.boxes[0]?.entry_id || null;
       await this.load();
     } catch (e) { this.toast(`Couldn't load boxes: ${e.message || e}`); }
   }
@@ -448,6 +457,7 @@ class MoodeStationsPanel extends HTMLElement {
 
   render() {
     const s = this.s;
+    this.saveView();
     this.shadowRoot.innerHTML = `<style>${STYLE}${this._embedded ? EMBED_STYLE : ""}</style>
       <div class="bar"><span id="menu"></span><h1>Stations</h1>
         ${s.boxes.length ? `<select id="box">${s.boxes.map((b) => `<option value="${b.entry_id}" ${b.entry_id === s.entry ? "selected" : ""}>${esc(b.title)}</option>`).join("")}</select>` : ""}
@@ -474,8 +484,8 @@ class MoodeStationsPanel extends HTMLElement {
     const $ = (id) => this.shadowRoot.getElementById(id);
     $("box")?.addEventListener("change", (e) => { this.s.entry = e.target.value; this.s.status = {}; this.s.results = []; this.load(); });
     this.shadowRoot.querySelectorAll("[data-tab]").forEach((t) => t.addEventListener("click", () => { this.s.tab = t.dataset.tab; this.render(); }));
-    $("filter")?.addEventListener("input", (e) => { this.s.filter = e.target.value; this.renderList(); });
-    $("show")?.addEventListener("change", (e) => { this.s.show = e.target.value; this.renderList(); });
+    $("filter")?.addEventListener("input", (e) => { this.s.filter = e.target.value; this.saveView(); this.renderList(); });
+    $("show")?.addEventListener("change", (e) => { this.s.show = e.target.value; this.saveView(); this.renderList(); });
     $("check")?.addEventListener("click", () => this.checkAll());
     $("sel-all")?.addEventListener("click", () => {
       const shown = this.visible();
