@@ -107,7 +107,10 @@ async def test_library_websocket(hass: HomeAssistant, mock_moode, hass_ws_client
         await client.send_json_auto_id({"type": "moode/library/artists", "entry_id": entry.entry_id})
         arts = (await client.receive_json())["result"]
         assert arts[0]["name"] == "AC/DC"
-        assert arts[0]["image"].startswith(f"/api/moode/artist/{entry.entry_id}?name=AC%2FDC") and "authSig=" in arts[0]["image"]
+        from urllib.parse import parse_qs, urlsplit
+        img = urlsplit(arts[0]["image"])
+        assert img.path == f"/api/moode/artist/{entry.entry_id}"
+        assert parse_qs(img.query)["name"] == ["AC/DC"] and "authSig" in parse_qs(img.query)
 
         await client.send_json_auto_id({"type": "moode/library/play", "entry_id": entry.entry_id,
                                         "what": "genre", "genre": "Hard Rock", "shuffle": True})
@@ -142,6 +145,9 @@ async def test_library_menu_letter_artist_album(hass: HomeAssistant, mock_moode)
         assert set(ids) == {"letter", "artist", "album"}
 
         assert hass.states.get(ids["letter"]).attributes["options"] == ["A", "B", "#"]
+        assert hass.states.get(ids["letter"]).attributes["next_menu"] == ids["artist"]
+        assert hass.states.get(ids["artist"]).attributes["next_menu"] == ids["album"]
+        assert "next_menu" not in hass.states.get(ids["album"]).attributes
         await hass.services.async_call("select", "select_option",
                                        {"entity_id": ids["letter"], "option": "B"}, blocking=True)
         # "The Beatles" files under B, sorted without the article

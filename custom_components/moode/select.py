@@ -61,7 +61,9 @@ async def async_setup_entry(
     if has_music:
         menu = LibraryMenu(coord, entry)
         await menu.async_load_artists()
-        ents += [LibraryLetterSelect(menu), LibraryArtistSelect(menu), LibraryAlbumSelect(menu)]
+        letter, artist, album = LibraryLetterSelect(menu), LibraryArtistSelect(menu), LibraryAlbumSelect(menu)
+        letter.next_menu, artist.next_menu = artist, album
+        ents += [letter, artist, album]
     else:
         remove_stale_entities(hass, entry, "select", f"{box}_lib_", set())
     async_add_entities(ents)
@@ -615,10 +617,22 @@ class _LibraryBase(MoodeEntity, SelectEntity):
         self._attr_translation_key = f"lib_{key}"
         self._attr_unique_id = f"{self._box_id}_lib_{key}"
         self._attr_icon = icon
+        self.next_menu: _LibraryBase | None = None  # the list that follows this one
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.menu.listen(self.async_write_ha_state)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        # Wall panels open this list right after a pick, so the menu feels like one
+        attrs = self._extra()
+        if self.next_menu is not None and self.next_menu.entity_id:
+            attrs["next_menu"] = self.next_menu.entity_id
+        return attrs
+
+    def _extra(self) -> dict:
+        return {}
 
 
 class LibraryLetterSelect(_LibraryBase):
@@ -656,8 +670,7 @@ class LibraryArtistSelect(_LibraryBase):
     def current_option(self) -> str | None:
         return self.menu.artist
 
-    @property
-    def extra_state_attributes(self) -> dict:
+    def _extra(self) -> dict:
         return {"letter": self.menu.letter}
 
     async def async_select_option(self, option: str) -> None:
@@ -682,8 +695,7 @@ class LibraryAlbumSelect(_LibraryBase):
     def current_option(self) -> str | None:
         return self.menu.album if self.menu.album in self.options else None
 
-    @property
-    def extra_state_attributes(self) -> dict:
+    def _extra(self) -> dict:
         return {"artist": self.menu.artist}
 
     async def async_select_option(self, option: str) -> None:
