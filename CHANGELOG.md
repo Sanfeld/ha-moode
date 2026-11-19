@@ -2,6 +2,10 @@
 
 ## 1.0.4 (2026-11-19)
 
+- A stopped box no longer shows an old song: moOde keeps the last song its own player
+  played, even after the box has since been playing from a multiroom zone, so stopped
+  players now show only the station
+
 Doorbell pause blueprint:
 
 - New "Turn the volume down" mode, as an alternative to pausing: lowers chosen players or amplifiers
