@@ -78,3 +78,36 @@ async def test_unload(hass: HomeAssistant, mock_moode) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is config_entries.ConfigEntryState.NOT_LOADED
+
+
+async def test_library_websocket(hass: HomeAssistant, mock_moode, hass_ws_client) -> None:
+    """FLACs tab: boxes with music, signed cover URLs, and play commands reach MPD."""
+    from unittest.mock import AsyncMock, patch
+
+    entry = await _setup(hass)
+    albums = [{"album": "Back in Black", "artist": "AC/DC", "year": "1980"}]
+    with (
+        patch("custom_components.moode.api.MoodeClient.lib_stats",
+              AsyncMock(return_value={"songs": 4, "artists": 1, "albums": 1})),
+        patch("custom_components.moode.api.MoodeClient.lib_albums", AsyncMock(return_value=albums)),
+        patch("custom_components.moode.api.MoodeClient.lib_play", AsyncMock()) as lib_play,
+    ):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id({"type": "moode/library/boxes"})
+        boxes = (await client.receive_json())["result"]
+        assert boxes[0]["entry_id"] == entry.entry_id and boxes[0]["songs"] == 4
+        assert boxes[0]["player"].startswith("media_player.")
+
+        await client.send_json_auto_id({"type": "moode/library/albums", "entry_id": entry.entry_id, "artist": "AC/DC"})
+        out = (await client.receive_json())["result"]
+        assert out[0]["album"] == "Back in Black"
+        assert out[0]["cover"].startswith(f"/api/moode/cover/{entry.entry_id}?") and "authSig=" in out[0]["cover"]
+
+        await client.send_json_auto_id({"type": "moode/library/play", "entry_id": entry.entry_id,
+                                        "what": "genre", "genre": "Hard Rock", "shuffle": True})
+        assert (await client.receive_json())["success"]
+        assert lib_play.call_args.args == ("genre",)
+        assert lib_play.call_args.kwargs["genre"] == "Hard Rock" and lib_play.call_args.kwargs["shuffle"] is True
+
+        await client.send_json_auto_id({"type": "moode/library/play", "entry_id": entry.entry_id, "what": "nonsense"})
+        assert not (await client.receive_json())["success"]

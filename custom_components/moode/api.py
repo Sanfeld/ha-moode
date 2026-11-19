@@ -218,6 +218,67 @@ def parse_list(lines: list[str], key: str) -> list[str]:
     return sorted({v for v in out if v}, key=str.casefold)
 
 
+
+# ---- music library (FLACs) ----------------------------------------------------------
+
+
+def parse_songs(lines: list[str]) -> list[dict[str, str]]:
+    """MPD song listing ('file:' starts each song) -> list of tag dicts (first value wins)."""
+    songs: list[dict[str, str]] = []
+    for line in lines:
+        key, sep, val = line.partition(": ")
+        if not sep:
+            continue
+        if key == "file":
+            songs.append({"file": val})
+        elif songs and key not in songs[-1]:
+            songs[-1][key] = val
+    return songs
+
+
+def parse_grouped(lines: list[str], key: str, groups: tuple[str, ...]) -> list[dict[str, str]]:
+    """Output of `list <key> group <g1> group <g2>`: group tags are printed when they change,
+    each `<key>:` line is one result carrying the current group values."""
+    current = {g: "" for g in groups}
+    out: list[dict[str, str]] = []
+    for line in lines:
+        k, sep, val = line.partition(": ")
+        if not sep and line.endswith(":"):
+            k, val = line[:-1], ""
+        elif not sep:
+            continue
+        if k in current:
+            current[k] = val
+        elif k == key:
+            out.append({key: val, **current})
+    return out
+
+
+def _disc_track(song: dict[str, str]) -> tuple[int, int, str]:
+    def num(v: str | None) -> int:
+        try:
+            return int(str(v or "0").split("/")[0])
+        except ValueError:
+            return 0
+    return num(song.get("Disc")), num(song.get("Track")), song.get("file", "")
+
+
+def song_out(song: dict[str, str]) -> dict[str, Any]:
+    dur = _float(song.get("duration")) or _float(song.get("Time"))
+    return {
+        "file": song.get("file", ""),
+        "title": song.get("Title") or song.get("file", "").rsplit("/", 1)[-1],
+        "artist": song.get("Artist", ""),
+        "album_artist": song.get("AlbumArtist") or song.get("Artist", ""),
+        "album": song.get("Album", ""),
+        "track": song.get("Track", ""),
+        "disc": song.get("Disc", ""),
+        "year": (song.get("Date") or "")[:4],
+        "genre": song.get("Genre", ""),
+        "duration": round(dur) if dur else None,
+    }
+
+
 STATION_DEFAULTS: dict[str, str] = {
     "type": "r", "genre": "", "broadcaster": "", "language": "", "country": "",
     "region": "", "bitrate": "", "format": "", "geo_fenced": "No", "home_page": "",
@@ -584,6 +645,107 @@ class MoodeClient:
 
     async def play_album_any(self, album: str) -> None:
         await self.mpd("clear", f"findadd album {mpd_quote(album)}", "play")
+
+    # ---- music library (FLACs) ----------------------------------------------------
+
+    async def lib_stats(self) -> dict[str, int]:
+        st = parse_mpd_pairs((await self.mpd("stats"))[0])
+        return {k: int(st.get(k, 0) or 0) for k in ("songs", "artists", "albums")}
+
+    async def lib_artists(self, genre: str | None = None) -> list[str]:
+        cmd = "list albumartist" + (f" genre {mpd_quote(genre)}" if genre else "")
+        return parse_list((await self.mpd(cmd))[0], "AlbumArtist")
+
+    async def lib_genres(self) -> list[str]:
+        return parse_list((await self.mpd("list genre"))[0], "Genre")
+
+    async def lib_albums(self, artist: str | None = None, genre: str | None = None) -> list[dict[str, str]]:
+        """Albums as {album, artist, year}; one artist's albums come oldest first."""
+        filt = ""
+        if artist is not None:
+            filt += f" albumartist {mpd_quote(artist)}"
+        if genre is not None:
+            filt += f" genre {mpd_quote(genre)}"
+        lines = (await self.mpd(f"list album{filt} group albumartist group date"))[0]
+        seen: dict[tuple[str, str], dict[str, str]] = {}
+        for row in parse_grouped(lines, "Album", ("AlbumArtist", "Date")):
+            if not row["Album"]:
+                continue
+            k = (row["AlbumArtist"], row["Album"])
+            year = (row["Date"] or "")[:4]
+            if k not in seen:
+                seen[k] = {"album": row["Album"], "artist": row["AlbumArtist"], "year": year}
+            elif year and (not seen[k]["year"] or year < seen[k]["year"]):
+                seen[k]["year"] = year
+        albums = list(seen.values())
+        if artist is not None:
+            albums.sort(key=lambda a: (a["year"] or "9999", a["album"].casefold()))
+        else:
+            albums.sort(key=lambda a: (a["album"].casefold(), a["artist"].casefold()))
+        return albums
+
+    async def lib_tracks(self, artist: str, album: str) -> list[dict[str, Any]]:
+        songs = parse_songs((await self.mpd(
+            f"find albumartist {mpd_quote(artist)} album {mpd_quote(album)}"))[0])
+        songs.sort(key=_disc_track)
+        return [song_out(s) for s in songs]
+
+    async def lib_first_file(self, artist: str, album: str) -> str | None:
+        songs = parse_songs((await self.mpd(
+            f"find albumartist {mpd_quote(artist)} album {mpd_quote(album)} window 0:1"))[0])
+        return songs[0]["file"] if songs else None
+
+    async def lib_search(self, query: str, limit: int = 300) -> list[dict[str, Any]]:
+        songs = parse_songs((await self.mpd(f"search any {mpd_quote(query)} window 0:{limit}"))[0])
+        return [song_out(s) for s in songs if not s["file"].startswith(("http://", "https://"))]
+
+    async def lib_recent(self, max_albums: int = 48) -> list[dict[str, str]]:
+        """Most recently added albums (by file modification time), newest first."""
+        expr = mpd_quote('(modified-since "1970-01-01T00:00:00Z")')
+        songs = parse_songs((await self.mpd(f"find {expr} sort -Last-Modified window 0:3000"))[0])
+        out: dict[tuple[str, str], dict[str, str]] = {}
+        for s in songs:
+            album = s.get("Album")
+            if not album or s["file"].startswith(("http://", "https://")):
+                continue
+            artist = s.get("AlbumArtist") or s.get("Artist", "")
+            if (artist, album) not in out:
+                out[(artist, album)] = {"album": album, "artist": artist,
+                                        "year": (s.get("Date") or "")[:4]}
+                if len(out) >= max_albums:
+                    break
+        return list(out.values())
+
+    async def lib_play(self, what: str, *, artist: str | None = None, album: str | None = None,
+                       genre: str | None = None, position: int = 0, shuffle: bool = False,
+                       queue: bool = False) -> None:
+        """Replace the queue with (or, queue=True, append) an album / artist / genre /
+        the whole library, then play."""
+        if what == "album" and artist is not None and album is not None:
+            add = f"findadd albumartist {mpd_quote(artist)} album {mpd_quote(album)}"
+        elif what == "artist" and artist is not None:
+            add = f"findadd albumartist {mpd_quote(artist)}"
+        elif what == "genre" and genre is not None:
+            add = f"findadd genre {mpd_quote(genre)}"
+        elif what == "all":
+            add = 'add ""'
+        else:
+            raise MoodeError(f"Nothing to play for {what!r}")
+        if queue:
+            st = parse_mpd_pairs((await self.mpd("status"))[0])
+            await self.mpd(add)
+            if st.get("state") != "play":
+                await self.mpd("play")
+            return
+        cmds = ["clearerror", "clear", add]
+        if shuffle:
+            cmds.append("shuffle")
+        cmds.append(f"play {max(0, int(position))}" if not shuffle else "play")
+        await self.mpd(*cmds)
+
+    def cover_url(self, file: str) -> str:
+        """moOde's cover art for a track: embedded art, or the folder image next to it."""
+        return f"{self.base_url}/coverart.php/{quote(file, safe='')}"
 
     async def announce(self, url: str, *, max_seconds: float, lead_in: float, resume: bool) -> None:
         """Play `url` once, then put things back the way they were."""

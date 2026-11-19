@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 (2026-11-19)
+
+- New **FLACs** tab on the moOde dashboard: the music library stored on your boxes
+  - browse by artist, album (with cover art) and genre, with an A–Z bar
+  - search artists, albums and songs; recently added albums
+  - play, shuffle or queue an album, artist or genre, or shuffle everything
+  - shows which rooms it plays in, with a small now-playing bar
+- The Music tab's *Browse library* button opens the FLACs tab
+
 ## 1.0.3 (2026-11-18)
 
 - Dashboard: newly starred favourites appear right away, and logo or name changes show

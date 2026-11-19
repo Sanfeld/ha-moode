@@ -14,8 +14,9 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
 from .api import MoodeClient
-from .const import CONF_VOLUME_MODE, DOMAIN, PANEL_URL, PLATFORMS, STATIC_URL, STRATEGY_URL
+from .const import CONF_VOLUME_MODE, DOMAIN, LIBRARY_URL, PANEL_URL, PLATFORMS, STATIC_URL, STRATEGY_URL
 from .coordinator import MoodeCoordinator
+from .library import async_setup_library
 from .stations import async_setup_stations
 
 type MoodeConfigEntry = ConfigEntry[MoodeCoordinator]
@@ -33,6 +34,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Stations manager: websocket API + the card the dashboard's Stations tab uses
     async_setup_stations(hass)
     add_extra_js_url(hass, f"{PANEL_URL}?v={version}")
+
+    # Music library (FLACs tab): websocket API, cover art proxy and its card
+    async_setup_library(hass)
+    add_extra_js_url(hass, f"{LIBRARY_URL}?v={version}")
     return True
 
 

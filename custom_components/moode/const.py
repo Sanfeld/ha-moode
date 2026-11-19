@@ -8,6 +8,7 @@ PLATFORMS = ["media_player", "switch", "select", "button"]
 STATIC_URL = "/moode_static"
 STRATEGY_URL = f"{STATIC_URL}/moode-strategy.js"
 PANEL_URL = f"{STATIC_URL}/moode-stations-panel.js"
+LIBRARY_URL = f"{STATIC_URL}/moode-library-card.js"
 CONF_RECEIVERS = "receivers"
 CONF_ZONE_NAME = "zone_name"
 CONF_FAVOURITES = "favourites"

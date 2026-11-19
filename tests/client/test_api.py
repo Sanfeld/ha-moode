@@ -667,3 +667,113 @@ def test_logo_urls_cannot_escape_the_logo_folder():
     c = api.MoodeClient("moode", None)
     assert c.logo_url("../../command/?cmd=stop") == "http://moode/imagesw/radio-logos/thumbs/..%2F..%2Fcommand%2F%3Fcmd%3Dstop.jpg"
     assert c.logo_url("P4 Kalmar", thumb=False) == "http://moode/imagesw/radio-logos/P4%20Kalmar.jpg"
+
+
+# ---- music library (FLACs tab) ------------------------------------------------------
+
+class LibraryMoode(FakeMoode):
+    """A box with a small FLAC library on its NVMe drive."""
+
+    SONGS = [
+        ("NVME/ACDC/Back in Black/02.flac", "AC/DC", "Back in Black", "1980", "Hard Rock", "2", "Shoot to Thrill", "317.5"),
+        ("NVME/ACDC/Back in Black/01.flac", "AC/DC", "Back in Black", "1980-07-25", "Hard Rock", "1/10", "Hells Bells", "312.2"),
+        ("NVME/ACDC/Highway/01.flac", "AC/DC", "Highway to Hell", "1979", "Hard Rock", "1", "Highway to Hell", "208"),
+        ("NVME/Aretha/Lady Soul/01.flac", "Aretha Franklin", "Lady Soul", "1968", "Soul", "1", "Chain of Fools", "166"),
+    ]
+
+    def mpd(self, line):
+        if line == "stats":
+            self.mpd_log.append(line)
+            return ["artists: 2", "albums: 3", "songs: 4", "uptime: 1"]
+        if line == "list genre":
+            return ["Genre: Soul", "Genre: Hard Rock", "Genre: "]
+        if line == "list album group albumartist group date":
+            return ["AlbumArtist: AC/DC", "Date: 1979", "Album: Highway to Hell", "Date: 1980",
+                    "Album: Back in Black", "Date: 1980-07-25", "Album: Back in Black",
+                    "AlbumArtist: Aretha Franklin", "Date: 1968", "Album: Lady Soul", "Date:", "Album: "]
+        if line == 'list album albumartist "AC/DC" group albumartist group date':
+            return ["AlbumArtist: AC/DC", "Date: 1980", "Album: Back in Black", "Date: 1979", "Album: Highway to Hell"]
+        if line.startswith("find albumartist") or line.startswith("search any") or line.startswith("find \"(modified"):
+            self.mpd_log.append(line)
+            rows = self.SONGS
+            if line.startswith("find albumartist"):
+                rows = [r for r in rows if f'"{r[1]}"' in line and f'album "{r[2]}"' in line]
+            if line.startswith("search any"):
+                q = line.split('"')[1].lower()
+                rows = [r for r in rows if any(q in v.lower() for v in r[1:7])]
+            if "window 0:1" in line:
+                rows = rows[:1]
+            out = []
+            for f, artist, album, date, genre, track, title, dur in rows:
+                out += [f"file: {f}", "Last-Modified: 2026-01-01T00:00:00Z", f"Artist: {artist}",
+                        f"AlbumArtist: {artist}", f"Album: {album}", f"Date: {date}", f"Genre: {genre}",
+                        f"Track: {track}", f"Title: {title}", f"duration: {dur}", f"Time: {round(float(dur))}"]
+            if "search any" in line:
+                out += ["file: http://radio/stream", "Title: Back in the radio"]
+            return out
+        return super().mpd(line)
+
+
+def test_library_browse():
+    box = LibraryMoode()
+
+    async def go():
+        server, c = await make(box)()
+        async with server:
+            return (await c.lib_stats(), await c.lib_genres(), await c.lib_albums(),
+                    await c.lib_albums("AC/DC"), await c.lib_tracks("AC/DC", "Back in Black"),
+                    await c.lib_first_file("AC/DC", "Highway to Hell"), await c.lib_search("back"),
+                    await c.lib_recent())
+
+    stats, genres, albums, acdc, tracks, first, found, recent = run(go())
+    assert stats == {"songs": 4, "artists": 2, "albums": 3}
+    assert genres == ["Hard Rock", "Soul"]
+    # grouped output: duplicates merged (earliest year), empty album dropped, sorted by name
+    assert albums == [
+        {"album": "Back in Black", "artist": "AC/DC", "year": "1980"},
+        {"album": "Highway to Hell", "artist": "AC/DC", "year": "1979"},
+        {"album": "Lady Soul", "artist": "Aretha Franklin", "year": "1968"},
+    ]
+    assert [a["album"] for a in acdc] == ["Highway to Hell", "Back in Black"]  # one artist: oldest first
+    assert [t["title"] for t in tracks] == ["Hells Bells", "Shoot to Thrill"]   # by track number
+    assert tracks[0]["duration"] == 312 and tracks[0]["year"] == "1980" and tracks[0]["track"] == "1/10"
+    assert first == "NVME/ACDC/Highway/01.flac"
+    assert all(not t["file"].startswith("http") for t in found)                 # radio streams left out
+    assert {t["album"] for t in found} == {"Back in Black"}
+    assert [r["album"] for r in recent] == ["Back in Black", "Highway to Hell", "Lady Soul"]
+    assert 'sort -Last-Modified' in box.mpd_log[-1]
+
+
+def test_library_play_modes():
+    box = LibraryMoode()
+
+    async def go():
+        server, c = await make(box)()
+        async with server:
+            await c.lib_play("album", artist="AC/DC", album="Back in Black", position=1)
+            a = list(box.mpd_log)
+            box.mpd_log.clear()
+            await c.lib_play("genre", genre="Hard Rock", shuffle=True)
+            g = list(box.mpd_log)
+            box.mpd_log.clear()
+            await c.lib_play("all", shuffle=True)
+            al = list(box.mpd_log)
+            box.mpd_log.clear()
+            box.state = "stop"
+            await c.lib_play("artist", artist="AC/DC", queue=True)
+            q = list(box.mpd_log)
+            with pytest.raises(api.MoodeError):
+                await c.lib_play("album", artist="AC/DC")
+            return a, g, al, q
+
+    a, g, al, q = run(go())
+    assert a[-4:] == ["clearerror", "clear", 'findadd albumartist "AC/DC" album "Back in Black"', "play 1"]
+    assert g[-5:] == ["clearerror", "clear", 'findadd genre "Hard Rock"', "shuffle", "play"]
+    assert al[-5:] == ["clearerror", "clear", 'add ""', "shuffle", "play"]
+    assert "clear" not in q and q[-2:] == ['findadd albumartist "AC/DC"', "play"]  # queued, then started
+
+
+def test_cover_url_encodes_the_whole_path():
+    c = api.MoodeClient("10.0.0.5", None)
+    assert c.cover_url("NVME/AC DC/Back in Black/01 #1?.flac") == \
+        "http://10.0.0.5/coverart.php/NVME%2FAC%20DC%2FBack%20in%20Black%2F01%20%231%3F.flac"

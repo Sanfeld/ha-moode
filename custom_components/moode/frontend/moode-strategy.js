@@ -299,7 +299,8 @@ class MoodeMusicStrategy extends HTMLElement {
         type: "button",
         name: "Browse library",
         icon: "mdi:music-box-multiple",
-        tap_action: { action: "navigate", navigation_path: `/media-browser/${zone.entity_id}` },
+        // the dashboard's own FLACs tab (same dashboard, whatever its URL is)
+        tap_action: { action: "navigate", navigation_path: `/${location.pathname.split("/")[1] || "lovelace"}/flacs` },
         grid_options: { columns: 6, rows: 1 },
       });
       if (tts)
@@ -384,6 +385,13 @@ class MoodeMusicStrategy extends HTMLElement {
           icon: "mdi:radio",
           type: "panel",
           cards: [{ type: "custom:moode-stations-card" }],
+        },
+        {
+          title: "FLACs",
+          path: "flacs",
+          icon: "mdi:album",
+          type: "panel",
+          cards: [{ type: "custom:moode-library-card" }],
         },
         {
           title: "Settings",
