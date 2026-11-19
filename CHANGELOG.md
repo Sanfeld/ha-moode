@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.0 (unreleased)
+## 1.2.0 (2026-11-19)
 
 - FLACs tab: artist photos (from Deezer, cached on Home Assistant; falls back to one of
   the artist's album covers). Can be switched off per box: Configure → Music library
