@@ -66,7 +66,7 @@ Import from `blueprints/automation/moode/` (*Settings → Automations → Bluepr
 | Blueprint | What it does |
 |---|---|
 | Amps follow zone | Switches amplifiers on and off with the zone, with an optional input, an off delay, and on-when-playing or on-when-on behaviour |
-| Doorbell pause | Pauses on a doorbell ring, optionally announces it, then resumes |
+| Doorbell pause | On a doorbell ring, pauses the music or turns the volume down (players or amplifiers), optionally announces it, then goes back to normal after a time you choose. Also works from a phone or tablet's "Last notification" sensor, for doorbells whose rings don't reach Home Assistant directly |
 | Morning radio | Plays a favourite at a set time on chosen days, optionally only when someone's home |
 
 ## Good to know
