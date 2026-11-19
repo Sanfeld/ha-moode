@@ -107,7 +107,10 @@ async def test_library_websocket(hass: HomeAssistant, mock_moode, hass_ws_client
         await client.send_json_auto_id({"type": "moode/library/artists", "entry_id": entry.entry_id})
         arts = (await client.receive_json())["result"]
         assert arts[0]["name"] == "AC/DC"
-        assert arts[0]["image"].startswith(f"/api/moode/artist/{entry.entry_id}?name=AC%2FDC") and "authSig=" in arts[0]["image"]
+        from urllib.parse import parse_qs, urlsplit
+        img = urlsplit(arts[0]["image"])
+        assert img.path == f"/api/moode/artist/{entry.entry_id}"
+        assert parse_qs(img.query)["name"] == ["AC/DC"] and "authSig" in parse_qs(img.query)
 
         await client.send_json_auto_id({"type": "moode/library/play", "entry_id": entry.entry_id,
                                         "what": "genre", "genre": "Hard Rock", "shuffle": True})
@@ -117,3 +120,17 @@ async def test_library_websocket(hass: HomeAssistant, mock_moode, hass_ws_client
 
         await client.send_json_auto_id({"type": "moode/library/play", "entry_id": entry.entry_id, "what": "nonsense"})
         assert not (await client.receive_json())["success"]
+
+
+async def test_leftover_library_menu_entities_are_removed(hass: HomeAssistant, mock_moode) -> None:
+    """Entities from the dropped library-menu test build disappear on setup."""
+    from homeassistant.helpers import entity_registry as er
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Streamer", unique_id="moodestreamer",
+                            data={CONF_HOST: "192.0.2.10"})
+    entry.add_to_hass(hass)
+    reg = er.async_get(hass)
+    old = reg.async_get_or_create("select", DOMAIN, "moodestreamer_lib_letter", config_entry=entry)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert reg.async_get(old.entity_id) is None

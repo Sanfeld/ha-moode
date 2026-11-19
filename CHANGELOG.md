@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1 (unreleased)
+
+- Removes the library menu selects left behind by a 1.3.0 test build (never released)
+- Tests: fixed the artist image URL check
+
 ## 1.2.0 (2026-11-19)
 
 - FLACs tab: artist photos (from Deezer, cached on Home Assistant; falls back to one of

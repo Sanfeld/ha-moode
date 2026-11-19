@@ -52,6 +52,9 @@ async def async_setup_entry(
         remove_stale_entities(hass, entry, "select", f"{box}_favourite", set())
     if entry.options.get(CONF_FAVOURITES):
         ents.append(FavouriteSelect(coord, entry))
+    # A 1.3.0 test build added library menu selects (letter/artist/album) for wall
+    # panels; the idea was dropped. Remove them wherever they were created.
+    remove_stale_entities(hass, entry, "select", f"{box}_lib_", set())
     async_add_entities(ents)
 
 
