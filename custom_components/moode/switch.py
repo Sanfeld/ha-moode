@@ -11,12 +11,22 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import MoodeConfigEntry
 from .api import MoodeError
 from .entity import MoodeEntity
+from .zones import remove_stale_entities, role
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: MoodeConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    async_add_entities([MoodeReceiverSwitch(entry.runtime_data, entry.entry_id, entry.unique_id, entry.title)])
+    coord = entry.runtime_data
+    box = entry.unique_id or entry.entry_id
+    rx = coord.data.receiver if coord.data else None
+    # The receiver on/off belongs to rooms: a zone's receivers, or a standalone box that
+    # has moOde's receiver switched on. Never on a sender (it can't be one).
+    r = role(hass, entry)
+    if r == "receiver" or (r == "standalone" and rx and rx.enabled):
+        async_add_entities([MoodeReceiverSwitch(coord, entry.entry_id, entry.unique_id, entry.title)])
+    else:
+        remove_stale_entities(hass, entry, "switch", f"{box}_receiver", set())
 
 
 class MoodeReceiverSwitch(MoodeEntity, SwitchEntity):

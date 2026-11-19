@@ -38,6 +38,8 @@ class MoodeCoordinator(DataUpdateCoordinator[MoodeState]):
         )
         self.client = client
         self.entry = entry
+        self.role: str | None = None      # sender / receiver / standalone, set at setup
+        self.release: str | None = None   # moOde version, e.g. "9.4.2"
         self.volume_mode = volume_mode
         self.recent: list[dict[str, str]] = []  # [{"name":..., "url":...}], newest first
         self._store: Store = Store(hass, 1, f"{DOMAIN}.recent.{entry.entry_id}")

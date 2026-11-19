@@ -19,5 +19,6 @@ class MoodeEntity(CoordinatorEntity[MoodeCoordinator]):
             name=title,
             manufacturer=MANUFACTURER,
             model="moOde audio player",
+            sw_version=getattr(coordinator, "release", None),
             configuration_url=coordinator.client.base_url,
         )

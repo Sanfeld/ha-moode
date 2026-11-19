@@ -170,7 +170,8 @@ class FakeSession:
 
     def get(self, url, **kw):
         if url.endswith("/index.php"):
-            return FakeResp("<html>moOde</html>", cookies={"PHPSESSID": _Morsel("abc123")})
+            page = getattr(self.box, "page", '<li>Release: 9.4.2 2025-09-10</li> <!-- NOTE: getMoodeRel() parses this  -->')
+            return FakeResp(f"<html>moOde {page}</html>", cookies={"PHPSESSID": _Morsel("abc123")})
         if "/imagesw/radio-logos/__tmp__" in url:
             name = unquote(url.rsplit("__tmp__", 1)[1])[:-4]
             return FakeResp("", 200 if name in getattr(self.box, "tmp_logos", set()) else 404)
@@ -790,3 +791,20 @@ def test_deezer_artist_matching():
     assert api.deezer_pick("Obscure", {"data": [hit("Obscure", md5="")]}) is None    # Deezer placeholder
     assert api.deezer_pick("X", {"data": [hit("X", pic="http://insecure/p.jpg")]}) is None
     assert api.deezer_pick("X", None) is None and api.deezer_pick("", {"data": []}) is None
+
+
+
+def test_moode_release():
+    assert api.parse_release("<li>Release: 9.4.2 2025-09-10</li>") == "9.4.2"
+    assert api.parse_release("<li>Release: 10.3.8 2026-MM-DD</li>") == "10.3.8"
+    assert api.parse_release("<html>no version here</html>") is None
+    box = FakeMoode()
+
+    async def go():
+        server, c = await make(box)()
+        async with server:
+            first = await c.get_release()
+            box.page = "<p>nothing</p>"
+            return first, await c.get_release()
+
+    assert run(go()) == ("9.4.2", None)

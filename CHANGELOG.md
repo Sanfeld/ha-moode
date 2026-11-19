@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0 (unreleased)
+
+- Each box only gets the controls that fit its role: no room mode, room station or
+  receiver switch on a sender, no station pickers on a zone's rooms. No more entities that
+  are always "unavailable". Changing a zone updates the boxes whose role changed.
+- Device pages show the moOde version (checked every 6 hours, so moOde updates show up)
+
 ## 1.2.1 (2026-11-19)
 
 - Removes the library menu selects left behind by a 1.3.0 test build (never released)

@@ -134,3 +134,38 @@ async def test_leftover_library_menu_entities_are_removed(hass: HomeAssistant, m
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert reg.async_get(old.entity_id) is None
+
+
+async def test_controls_follow_the_box_role(hass: HomeAssistant, mock_moode) -> None:
+    """A sender gets no room controls, a room gets no station pickers, and changing the
+    zone rebuilds them for the boxes whose role changed. The moOde version is shown."""
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+
+    room = MockConfigEntry(domain=DOMAIN, title="Kitchen", unique_id="kitchenpi",
+                           data={CONF_HOST: "192.0.2.11"})
+    room.add_to_hass(hass)
+    sender = MockConfigEntry(domain=DOMAIN, title="Streamer", unique_id="moodestreamer",
+                             data={CONF_HOST: "192.0.2.10"}, options={"receivers": [room.entry_id]})
+    sender.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(sender.entry_id)
+    await hass.async_block_till_done()
+
+    reg = er.async_get(hass)
+
+    def keys(entry) -> set[str]:
+        box = entry.unique_id
+        return {e.unique_id.removeprefix(f"{box}_") for e in er.async_entries_for_config_entry(reg, entry.entry_id)}
+
+    s, r = keys(sender), keys(room)
+    assert {"all_stations", "recent"} <= s and not {"room_mode", "room_station", "receiver"} & s
+    assert {"room_mode", "room_station", "receiver"} <= r and not {"all_stations", "recent"} & r
+
+    dev = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "moodestreamer")})
+    assert dev.sw_version == "9.4.2"
+
+    # Take the Kitchen out of the zone: it becomes a box of its own (receiver off in moOde)
+    hass.config_entries.async_update_entry(sender, options={"receivers": []})
+    await hass.async_block_till_done()
+    r = keys(room)
+    assert {"all_stations", "recent"} <= r and not {"room_mode", "room_station", "receiver"} & r

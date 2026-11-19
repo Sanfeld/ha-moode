@@ -30,6 +30,14 @@ def sender_for(hass: HomeAssistant, entry_id: str) -> ConfigEntry | None:
     return None
 
 
+def role(hass: HomeAssistant, entry: ConfigEntry) -> str:
+    """'sender' (has rooms), 'receiver' (a room in some zone) or 'standalone'.
+    Read from the config, so it's known before the boxes are loaded."""
+    if receiver_ids(entry):
+        return "sender"
+    return "receiver" if sender_for(hass, entry.entry_id) is not None else "standalone"
+
+
 def receivers_of(hass: HomeAssistant, entry: ConfigEntry) -> list[ConfigEntry]:
     out = []
     for rid in receiver_ids(entry):

@@ -21,7 +21,7 @@ from .api import MoodeError
 from .browse import async_play
 from .const import CONF_AMPLIFIER, CONF_FAV_WAKE_ZONE, CONF_FAVOURITES, CONF_SLEEP_ACTION, CONF_SLEEP_FADE, CONF_SLEEP_FADE_SECONDS, opt
 from .entity import MoodeEntity
-from .zones import loaded, remove_stale_entities, sender_for, wake_zone_if_silent, zone_off
+from .zones import loaded, remove_stale_entities, role, sender_for, wake_zone_if_silent, zone_off
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,16 +36,20 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: MoodeConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coord = entry.runtime_data
-    ents: list[SelectEntity] = [
-        SleepTimerSelect(coord, entry),
-        RoomModeSelect(coord, entry),
-        RoomStationSelect(coord, entry),
-        AllStationsSelect(coord, entry),
-        RecentSelect(coord, entry),
-    ]
+    box = entry.unique_id or entry.entry_id
+    ents: list[SelectEntity] = [SleepTimerSelect(coord, entry)]
+    # Only the controls that fit this box's role. Changing the zone reloads the boxes
+    # whose role changed, so these follow along.
+    if role(hass, entry) == "receiver":
+        ents += [RoomModeSelect(coord, entry), RoomStationSelect(coord, entry)]
+        for key in ("all_stations", "recent"):
+            remove_stale_entities(hass, entry, "select", f"{box}_{key}", set())
+    else:
+        ents += [AllStationsSelect(coord, entry), RecentSelect(coord, entry)]
+        for key in ("room_mode", "room_station"):
+            remove_stale_entities(hass, entry, "select", f"{box}_{key}", set())
     if entry.options.get(CONF_AMPLIFIER):
         ents.append(AmpInputSelect(coord, entry))
-    box = entry.unique_id or entry.entry_id
     if not entry.options.get(CONF_AMPLIFIER):
         remove_stale_entities(hass, entry, "select", f"{box}_amp_input", set())
     if not entry.options.get(CONF_FAVOURITES):
@@ -468,7 +472,6 @@ class RecentSelect(MoodeEntity, SelectEntity):
     def available(self) -> bool:
         return (
             super().available
-            and bool(self.coordinator.recent)
             and sender_for(self.hass, self._entry.entry_id) is None
         )
 

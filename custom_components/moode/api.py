@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import re
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -279,6 +280,16 @@ def song_out(song: dict[str, str]) -> dict[str, Any]:
     }
 
 
+_RELEASE_RE = re.compile(r"Release:\s*(\d+\.\d+\.\d+)")
+
+
+def parse_release(html: str) -> str | None:
+    """moOde's version from its web page: the About box says 'Release: 9.4.2 2025-…'
+    (moOde's own tools read the same line)."""
+    m = _RELEASE_RE.search(html or "")
+    return m.group(1) if m else None
+
+
 def artist_key(name: str) -> str:
     """Loose form of an artist name for matching: 'The Allman Brothers Band' ==
     'Allman Brothers Band', 'Simon & Garfunkel' == 'Simon and Garfunkel'."""
@@ -476,6 +487,20 @@ class MoodeClient:
         except (ClientError, asyncio.TimeoutError, OSError) as err:
             _LOGGER.debug("%s: couldn't open moOde's page for a session: %s", self.host, err)
         return {}
+
+    async def get_release(self) -> str | None:
+        """The moOde version installed on the box, e.g. '9.4.2' (None if unknown)."""
+        kwargs: dict[str, Any] = {}
+        if ClientTimeout is not None:
+            kwargs["timeout"] = ClientTimeout(total=10)
+        try:
+            async with self._session.get(f"{self.base_url}/index.php", **kwargs) as resp:
+                if resp.status != 200:
+                    return None
+                return parse_release((await resp.read()).decode("utf-8", "replace"))
+        except (ClientError, asyncio.TimeoutError, OSError) as err:
+            _LOGGER.debug("%s: couldn't read the moOde version: %s", self.host, err)
+            return None
 
     def tmp_logo_url(self, name: str) -> str:
         return f"{self.base_url}/imagesw/radio-logos/__tmp__{quote(name, safe='')}.jpg"
