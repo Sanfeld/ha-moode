@@ -32,6 +32,8 @@ def mock_moode():
         patch("custom_components.moode.api.MoodeClient.idle_forever", AsyncMock(return_value=None)),
         patch("custom_components.moode.api.MoodeClient.lsinfo", AsyncMock(return_value=[])),
         patch("custom_components.moode.api.MoodeClient.get_stations", AsyncMock(return_value=[])),
+        patch("custom_components.moode.api.MoodeClient.lib_stats",
+              AsyncMock(return_value={"songs": 0, "artists": 0, "albums": 0})),
         patch("custom_components.moode.api.MoodeClient.play", AsyncMock()) as play,
         patch("custom_components.moode.api.MoodeClient.set_volume", AsyncMock()) as set_volume,
     ):

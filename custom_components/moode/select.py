@@ -52,6 +52,18 @@ async def async_setup_entry(
         remove_stale_entities(hass, entry, "select", f"{box}_favourite", set())
     if entry.options.get(CONF_FAVOURITES):
         ents.append(FavouriteSelect(coord, entry))
+
+    # Music library menu (letter -> artist -> album), only on boxes with music of their own
+    try:
+        has_music = (await coord.client.lib_stats())["songs"] > 0
+    except MoodeError:
+        has_music = False
+    if has_music:
+        menu = LibraryMenu(coord, entry)
+        await menu.async_load_artists()
+        ents += [LibraryLetterSelect(menu), LibraryArtistSelect(menu), LibraryAlbumSelect(menu)]
+    else:
+        remove_stale_entities(hass, entry, "select", f"{box}_lib_", set())
     async_add_entities(ents)
 
 
@@ -499,3 +511,182 @@ class RecentSelect(MoodeEntity, SelectEntity):
         except MoodeError as err:
             raise HomeAssistantError(f"moOde: {err}") from err
         await self.coordinator.async_request_refresh()
+
+
+# ---------------------------------------------------------------- music library menu
+
+SHUFFLE_ALL = "Shuffle all"
+LETTERS = [*"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "#"]
+
+
+def first_letter(name: str) -> str:
+    n = name.strip()
+    for article in ("the ", "a ", "an "):
+        if n.casefold().startswith(article) and len(n) > len(article):
+            n = n[len(article):]
+            break
+    c = n[:1].upper()
+    return c if "A" <= c <= "Z" else "#"
+
+
+def sort_name(name: str) -> str:
+    n = name.strip()
+    return (n[4:] if n.casefold().startswith("the ") else n).casefold()
+
+
+class LibraryMenu:
+    """State shared by the three menu entities: pick a letter, then an artist, then an
+    album (or "Shuffle all"). Made for wall panels, usable anywhere."""
+
+    def __init__(self, coordinator, entry: MoodeConfigEntry) -> None:
+        self.coordinator = coordinator
+        self.entry = entry
+        self.artists: list[str] = []
+        self.letter: str | None = None
+        self.artist: str | None = None
+        self.albums: list[str] = []
+        self.album: str | None = None
+        self._listeners: list = []
+
+    @property
+    def client(self):
+        return self.coordinator.client
+
+    def listen(self, cb) -> None:
+        self._listeners.append(cb)
+
+    def changed(self) -> None:
+        for cb in self._listeners:
+            cb()
+
+    async def async_load_artists(self) -> None:
+        try:
+            self.artists = await self.client.lib_artists()
+        except MoodeError as err:
+            _LOGGER.debug("moOde library: couldn't list artists: %s", err)
+
+    @property
+    def letters(self) -> list[str]:
+        have = {first_letter(a) for a in self.artists}
+        return [l for l in LETTERS if l in have]
+
+    @property
+    def letter_artists(self) -> list[str]:
+        if not self.letter:
+            return []
+        return sorted((a for a in self.artists if first_letter(a) == self.letter), key=sort_name)
+
+    async def pick_letter(self, letter: str) -> None:
+        await self.async_load_artists()  # pick up music added since the last time
+        self.letter, self.artist, self.albums, self.album = letter, None, [], None
+        self.changed()
+
+    async def pick_artist(self, artist: str) -> None:
+        try:
+            albums = await self.client.lib_albums(artist)
+        except MoodeError as err:
+            raise HomeAssistantError(f"moOde: {err}") from err
+        self.letter = first_letter(artist)
+        self.artist, self.album = artist, None
+        self.albums = [a["album"] for a in albums]
+        self.changed()
+
+    async def play(self, choice: str) -> None:
+        if not self.artist:
+            raise HomeAssistantError("Pick an artist first")
+        try:
+            if choice == SHUFFLE_ALL:
+                await self.client.lib_play("artist", artist=self.artist, shuffle=True)
+            else:
+                await self.client.lib_play("album", artist=self.artist, album=choice)
+        except MoodeError as err:
+            raise HomeAssistantError(f"moOde: {err}") from err
+        self.album = choice
+        self.changed()
+        await wake_zone_if_silent(self.coordinator.hass, self.entry)
+        await self.coordinator.async_request_refresh()
+
+
+class _LibraryBase(MoodeEntity, SelectEntity):
+    def __init__(self, menu: LibraryMenu, key: str, icon: str) -> None:
+        entry = menu.entry
+        super().__init__(menu.coordinator, entry.entry_id, entry.unique_id, entry.title)
+        self.menu = menu
+        self._attr_translation_key = f"lib_{key}"
+        self._attr_unique_id = f"{self._box_id}_lib_{key}"
+        self._attr_icon = icon
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.menu.listen(self.async_write_ha_state)
+
+
+class LibraryLetterSelect(_LibraryBase):
+    """Step 1: the first letter of the artist."""
+
+    def __init__(self, menu: LibraryMenu) -> None:
+        super().__init__(menu, "letter", "mdi:alphabetical-variant")
+
+    @property
+    def options(self) -> list[str]:
+        return self.menu.letters or ["#"]
+
+    @property
+    def current_option(self) -> str | None:
+        return self.menu.letter if self.menu.letter in self.options else None
+
+    async def async_select_option(self, option: str) -> None:
+        await self.menu.pick_letter(option)
+
+
+class LibraryArtistSelect(_LibraryBase):
+    """Step 2: the artists starting with the chosen letter."""
+
+    def __init__(self, menu: LibraryMenu) -> None:
+        super().__init__(menu, "artist", "mdi:account-music")
+
+    @property
+    def options(self) -> list[str]:
+        opts = self.menu.letter_artists
+        if self.menu.artist and self.menu.artist not in opts:
+            opts = [self.menu.artist, *opts]
+        return opts or ["(pick a letter first)"]
+
+    @property
+    def current_option(self) -> str | None:
+        return self.menu.artist
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"letter": self.menu.letter}
+
+    async def async_select_option(self, option: str) -> None:
+        if option.startswith("("):
+            return
+        await self.menu.pick_artist(option)
+
+
+class LibraryAlbumSelect(_LibraryBase):
+    """Step 3: "Shuffle all" or one of the artist's albums; picking one plays it."""
+
+    def __init__(self, menu: LibraryMenu) -> None:
+        super().__init__(menu, "album", "mdi:album")
+
+    @property
+    def options(self) -> list[str]:
+        if not self.menu.artist:
+            return ["(pick an artist first)"]
+        return [SHUFFLE_ALL, *self.menu.albums]
+
+    @property
+    def current_option(self) -> str | None:
+        return self.menu.album if self.menu.album in self.options else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"artist": self.menu.artist}
+
+    async def async_select_option(self, option: str) -> None:
+        if option.startswith("("):
+            return
+        await self.menu.play(option)

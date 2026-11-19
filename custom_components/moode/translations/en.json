@@ -61,6 +61,15 @@
       },
       "recent": {
         "name": "Recently played"
+      },
+      "lib_letter": {
+        "name": "Library: artist letter"
+      },
+      "lib_artist": {
+        "name": "Library: artist"
+      },
+      "lib_album": {
+        "name": "Library: album"
       }
     },
     "button": {

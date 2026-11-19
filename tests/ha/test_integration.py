@@ -117,3 +117,48 @@ async def test_library_websocket(hass: HomeAssistant, mock_moode, hass_ws_client
 
         await client.send_json_auto_id({"type": "moode/library/play", "entry_id": entry.entry_id, "what": "nonsense"})
         assert not (await client.receive_json())["success"]
+
+
+async def test_library_menu_letter_artist_album(hass: HomeAssistant, mock_moode) -> None:
+    """Panel drill-down: letter -> that letter's artists -> "Shuffle all" + albums -> plays."""
+    from unittest.mock import AsyncMock, patch
+
+    from homeassistant.helpers import entity_registry as er
+
+    artists = ["AC/DC", "The Beatles", "Aerosmith", "38 Special", "Black Sabbath"]
+    albums = [{"album": "Highway to Hell", "artist": "AC/DC", "year": "1979"},
+              {"album": "Back in Black", "artist": "AC/DC", "year": "1980"}]
+    with (
+        patch("custom_components.moode.api.MoodeClient.lib_stats",
+              AsyncMock(return_value={"songs": 40, "artists": 5, "albums": 9})),
+        patch("custom_components.moode.api.MoodeClient.lib_artists", AsyncMock(return_value=artists)),
+        patch("custom_components.moode.api.MoodeClient.lib_albums", AsyncMock(return_value=albums)),
+        patch("custom_components.moode.api.MoodeClient.lib_play", AsyncMock()) as lib_play,
+    ):
+        entry = await _setup(hass)
+        reg = er.async_get(hass)
+        ids = {e.unique_id.rsplit("_lib_", 1)[1]: e.entity_id
+               for e in er.async_entries_for_config_entry(reg, entry.entry_id) if "_lib_" in e.unique_id}
+        assert set(ids) == {"letter", "artist", "album"}
+
+        assert hass.states.get(ids["letter"]).attributes["options"] == ["A", "B", "#"]
+        await hass.services.async_call("select", "select_option",
+                                       {"entity_id": ids["letter"], "option": "B"}, blocking=True)
+        # "The Beatles" files under B, sorted without the article
+        assert hass.states.get(ids["artist"]).attributes["options"] == ["The Beatles", "Black Sabbath"]
+
+        await hass.services.async_call("select", "select_option",
+                                       {"entity_id": ids["letter"], "option": "A"}, blocking=True)
+        assert hass.states.get(ids["artist"]).attributes["options"] == ["AC/DC", "Aerosmith"]
+        await hass.services.async_call("select", "select_option",
+                                       {"entity_id": ids["artist"], "option": "AC/DC"}, blocking=True)
+        assert hass.states.get(ids["album"]).attributes["options"] == ["Shuffle all", "Highway to Hell", "Back in Black"]
+
+        await hass.services.async_call("select", "select_option",
+                                       {"entity_id": ids["album"], "option": "Back in Black"}, blocking=True)
+        assert lib_play.call_args.args == ("album",)
+        assert lib_play.call_args.kwargs["album"] == "Back in Black"
+        await hass.services.async_call("select", "select_option",
+                                       {"entity_id": ids["album"], "option": "Shuffle all"}, blocking=True)
+        assert lib_play.call_args.args == ("artist",) and lib_play.call_args.kwargs["shuffle"] is True
+        assert hass.states.get(ids["album"]).state == "Shuffle all"
