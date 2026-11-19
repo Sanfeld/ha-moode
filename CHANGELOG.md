@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.1 (unreleased)
+## 1.2.1 (2026-11-19)
 
 - Removes the library menu selects left behind by a 1.3.0 test build (never released)
 - Tests: fixed the artist image URL check
