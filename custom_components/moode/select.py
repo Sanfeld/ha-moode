@@ -55,9 +55,12 @@ async def async_setup_entry(
 
     # Music library menu (letter -> artist -> album), only on boxes with music of their own
     try:
-        has_music = (await coord.client.lib_stats())["songs"] > 0
+        # moOde ships a couple of test tracks on every box: that's not a library.
+        # Zone receivers play the sender's music, so they don't get the menu either.
+        has_music = (await coord.client.lib_stats())["songs"] >= MIN_LIBRARY_SONGS
     except MoodeError:
         has_music = False
+    has_music = has_music and sender_for(hass, entry.entry_id) is None
     if has_music:
         menu = LibraryMenu(coord, entry)
         await menu.async_load_artists()
@@ -518,6 +521,30 @@ class RecentSelect(MoodeEntity, SelectEntity):
 # ---------------------------------------------------------------- music library menu
 
 SHUFFLE_ALL = "Shuffle all"
+MORE, BACK = "More >>", "<< Back"
+MIN_LIBRARY_SONGS = 10
+# Wall panels (NSPanel Easy) reboot when one list carries too much text: keep each page small
+PAGE_ITEMS = 9
+PAGE_CHARS = 140
+LABEL_MAX = 36
+
+
+def paginate(items: list[str]) -> list[list[str]]:
+    """Split into pages that stay under PAGE_ITEMS entries and PAGE_CHARS characters."""
+    pages: list[list[str]] = [[]]
+    used = 0
+    for it in items:
+        n = min(len(it), LABEL_MAX) + 1
+        if pages[-1] and (len(pages[-1]) >= PAGE_ITEMS or used + n > PAGE_CHARS):
+            pages.append([])
+            used = 0
+        pages[-1].append(it)
+        used += n
+    return pages
+
+
+def short(label: str) -> str:
+    return label if len(label) <= LABEL_MAX else label[: LABEL_MAX - 3].rstrip() + "..."
 LETTERS = [*"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "#"]
 
 
@@ -548,6 +575,8 @@ class LibraryMenu:
         self.artist: str | None = None
         self.albums: list[str] = []
         self.album: str | None = None
+        self.page = {"artist": 0, "album": 0}
+        self.reopen: str | None = None  # "artist"/"album": that list should open again
         self._listeners: list = []
 
     @property
@@ -578,9 +607,33 @@ class LibraryMenu:
             return []
         return sorted((a for a in self.artists if first_letter(a) == self.letter), key=sort_name)
 
+    def paged(self, which: str, items: list[str]) -> tuple[list[str], dict[str, str]]:
+        """This page of `items` as (labels, label -> real value), with More/Back entries."""
+        pages = paginate(items)
+        n = min(self.page[which], len(pages) - 1)
+        self.page[which] = n
+        labels: dict[str, str] = {}
+        for it in pages[n]:
+            lab = short(it)
+            while lab in labels:
+                lab += " "
+            labels[lab] = it
+        opts = ([BACK] if n > 0 else []) + list(labels) + ([MORE] if n < len(pages) - 1 else [])
+        return opts, labels
+
+    def turn_page(self, which: str, option: str) -> bool:
+        if option not in (MORE, BACK):
+            return False
+        self.page[which] += 1 if option == MORE else -1
+        self.reopen = which
+        self.changed()
+        return True
+
     async def pick_letter(self, letter: str) -> None:
         await self.async_load_artists()  # pick up music added since the last time
         self.letter, self.artist, self.albums, self.album = letter, None, [], None
+        self.page = {"artist": 0, "album": 0}
+        self.reopen = None
         self.changed()
 
     async def pick_artist(self, artist: str) -> None:
@@ -591,6 +644,8 @@ class LibraryMenu:
         self.letter = first_letter(artist)
         self.artist, self.album = artist, None
         self.albums = [a["album"] for a in albums]
+        self.page["album"] = 0
+        self.reopen = None
         self.changed()
 
     async def play(self, choice: str) -> None:
@@ -604,6 +659,7 @@ class LibraryMenu:
         except MoodeError as err:
             raise HomeAssistantError(f"moOde: {err}") from err
         self.album = choice
+        self.reopen = None
         self.changed()
         await wake_zone_if_silent(self.coordinator.hass, self.entry)
         await self.coordinator.async_request_refresh()
@@ -627,7 +683,10 @@ class _LibraryBase(MoodeEntity, SelectEntity):
     def extra_state_attributes(self) -> dict:
         # Wall panels open this list right after a pick, so the menu feels like one
         attrs = self._extra()
-        if self.next_menu is not None and self.next_menu.entity_id:
+        key = self._attr_unique_id.rsplit("_lib_", 1)[-1]
+        if self.menu.reopen == key and self.entity_id:
+            attrs["next_menu"] = self.entity_id  # a page turn: show this list again
+        elif self.next_menu is not None and self.next_menu.entity_id:
             attrs["next_menu"] = self.next_menu.entity_id
         return attrs
 
@@ -661,22 +720,26 @@ class LibraryArtistSelect(_LibraryBase):
 
     @property
     def options(self) -> list[str]:
-        opts = self.menu.letter_artists
-        if self.menu.artist and self.menu.artist not in opts:
-            opts = [self.menu.artist, *opts]
-        return opts or ["(pick a letter first)"]
+        artists = self.menu.letter_artists
+        if not artists:
+            return ["(pick a letter first)"]
+        return self.menu.paged("artist", artists)[0]
 
     @property
     def current_option(self) -> str | None:
-        return self.menu.artist
+        if not self.menu.letter_artists:
+            return None
+        labels = self.menu.paged("artist", self.menu.letter_artists)[1]
+        return next((lab for lab, real in labels.items() if real == self.menu.artist), None)
 
     def _extra(self) -> dict:
         return {"letter": self.menu.letter}
 
     async def async_select_option(self, option: str) -> None:
-        if option.startswith("("):
+        if option.startswith("(") or self.menu.turn_page("artist", option):
             return
-        await self.menu.pick_artist(option)
+        labels = self.menu.paged("artist", self.menu.letter_artists)[1]
+        await self.menu.pick_artist(labels.get(option, option))
 
 
 class LibraryAlbumSelect(_LibraryBase):
@@ -689,16 +752,20 @@ class LibraryAlbumSelect(_LibraryBase):
     def options(self) -> list[str]:
         if not self.menu.artist:
             return ["(pick an artist first)"]
-        return [SHUFFLE_ALL, *self.menu.albums]
+        return self.menu.paged("album", [SHUFFLE_ALL, *self.menu.albums])[0]
 
     @property
     def current_option(self) -> str | None:
-        return self.menu.album if self.menu.album in self.options else None
+        if not self.menu.artist:
+            return None
+        labels = self.menu.paged("album", [SHUFFLE_ALL, *self.menu.albums])[1]
+        return next((lab for lab, real in labels.items() if real == self.menu.album), None)
 
     def _extra(self) -> dict:
         return {"artist": self.menu.artist}
 
     async def async_select_option(self, option: str) -> None:
-        if option.startswith("("):
+        if option.startswith("(") or self.menu.turn_page("album", option):
             return
-        await self.menu.play(option)
+        labels = self.menu.paged("album", [SHUFFLE_ALL, *self.menu.albums])[1]
+        await self.menu.play(labels.get(option, option))
