@@ -1,8 +1,9 @@
 blueprint:
   name: moOde – Pause music when the doorbell rings
   description: >
-    Pauses moOde players/zones when a doorbell rings, optionally speaks an
-    announcement, and resumes after a delay. Turn this automation off to disable it.
+    When a doorbell rings, either pauses moOde players/zones or turns the volume
+    down, optionally speaks an announcement, and goes back to normal after a delay.
+    Turn this automation off to disable it.
   domain: automation
   source_url: https://github.com/Sanfeld/ha-moode/blob/main/blueprints/automation/moode/doorbell_pause.yaml
   input:
@@ -14,6 +15,24 @@ blueprint:
           multiple: true
           filter:
             - domain: [binary_sensor, event]
+    notification_sensors:
+      name: Phone/tablet notification sensors (optional)
+      description: >
+        "Last notification" sensors from the Home Assistant app on a phone or tablet that
+        gets the doorbell app's notifications. A workaround for doorbells whose rings
+        don't reach Home Assistant directly.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: sensor
+    notification_match:
+      name: Notification that means a ring
+      description: Text (regular expression) matched against the notification's channel and text.
+      default: "doorbell\\.call|is ringing"
+      selector:
+        text: {}
     players:
       name: moOde zones / players to pause
       selector:
@@ -22,19 +41,53 @@ blueprint:
           filter:
             - integration: moode
               domain: media_player
+    action_mode:
+      name: When the doorbell rings
+      default: pause
+      selector:
+        select:
+          options:
+            - label: Pause the music
+              value: pause
+            - label: Turn the volume down
+              value: duck
+    duck_entities:
+      name: Volume to turn down
+      description: >
+        For "Turn the volume down": the players or amplifiers whose volume to lower,
+        e.g. the Onkyo and Yamaha, plus moOde players that have their own volume (Kitchen).
+        Only those that are on are touched.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: media_player
+    duck_level:
+      name: Turn the volume down to
+      default: 15
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+          mode: slider
     resume:
-      name: Resume afterwards
+      name: Go back to normal afterwards
+      description: Start the music again (pause) or put the volume back (turn down) after the time below.
       default: true
       selector:
         boolean: {}
     resume_after:
-      name: Resume after
+      name: How long to pause / keep the volume down
       default: 60
       selector:
         number:
           min: 5
-          max: 600
+          max: 1800
+          step: 5
           unit_of_measurement: s
+          mode: box
     tts_engine:
       name: Announcement voice (optional)
       description: A text-to-speech engine. Leave empty for no announcement.
@@ -43,6 +96,15 @@ blueprint:
         entity:
           filter:
             - domain: tts
+    announce_time:
+      name: Announcement length
+      description: For "Turn the volume down" with an announcement - how long to wait for the announcement to finish before the volume goes down.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          unit_of_measurement: s
     message:
       name: Announcement text
       default: "Someone is at the door."
@@ -55,30 +117,66 @@ max_exceeded: silent
 triggers:
   - trigger: state
     entity_id: !input doorbells
+  - trigger: state
+    entity_id: !input notification_sensors
+    attribute: post_time
+
+trigger_variables:
+  notification_match: !input notification_match
 
 conditions:
   - condition: template
     value_template: >
-      {{ trigger.from_state is not none and trigger.to_state is not none
-         and trigger.from_state.state not in ['unavailable', 'unknown']
-         and (trigger.to_state.domain == 'event' or trigger.to_state.state == 'on') }}
+      {%- set f = trigger.from_state -%}
+      {%- set t = trigger.to_state -%}
+      {%- if f is none or t is none or t.state in ['unavailable', 'unknown'] -%}
+        false
+      {%- elif t.domain == 'sensor' -%}
+        {# A new phone/tablet notification: new post time, and it looks like a ring #}
+        {%- set new = t.attributes.get('post_time') is not none
+                      and t.attributes.get('post_time') != f.attributes.get('post_time') -%}
+        {%- set what = (t.attributes.get('channel_id', '') ~ ' ' ~ t.state) -%}
+        {{ new and (what is search(notification_match, ignorecase=true)) }}
+      {%- elif t.domain == 'event' -%}
+        {# A ring gives the event a new timestamp. Coming back from 'unavailable' (restart) is not a ring,
+           but the very first ring of a doorbell that never rang before starts from 'unknown'. #}
+        {{ f.state != 'unavailable' }}
+      {%- else -%}
+        {{ t.state == 'on' and f.state == 'off' }}
+      {%- endif -%}
 
 variables:
   players: !input players
   tts_engine: !input tts_engine
   message: !input message
   resume: !input resume
-  was_playing: "{{ players | select('is_state', 'playing') | list }}"
+  action_mode: !input action_mode
+  duck_entities: !input duck_entities
+  duck_level: !input duck_level
+  was_playing: "{{ players | select('is_state', 'playing') | list if action_mode == 'pause' else [] }}"
+  saved_volumes: >-
+    {%- set ns = namespace(items=[]) -%}
+    {%- if action_mode == 'duck' -%}
+      {%- for e in duck_entities
+            if states(e) not in ['off', 'standby', 'unavailable', 'unknown']
+            and state_attr(e, 'volume_level') is number
+            and state_attr(e, 'volume_level') > (duck_level | float(15)) / 100 -%}
+        {%- set ns.items = ns.items + [{'entity': e, 'volume': state_attr(e, 'volume_level')}] -%}
+      {%- endfor -%}
+    {%- endif -%}
+    {{ ns.items }}
 
 actions:
-  - if:
+  - alias: Pause mode - pause first
+    if:
       - condition: template
         value_template: "{{ was_playing | length > 0 }}"
     then:
       - action: media_player.media_pause
         target:
           entity_id: "{{ was_playing }}"
-  - if:
+  - alias: Announcement (at normal volume, before anything is turned down)
+    if:
       - condition: template
         value_template: "{{ tts_engine | length > 0 and message | length > 0 }}"
     then:
@@ -90,6 +188,39 @@ actions:
           media_content_type: music
           media_content_id: "media-source://tts/{{ tts_engine }}?message={{ message | urlencode }}"
           announce: true
+      - if:
+          - condition: template
+            value_template: "{{ saved_volumes | length > 0 }}"
+        then:
+          - alias: Let the announcement finish before turning the volume down
+            delay:
+              seconds: !input announce_time
+  - alias: Volume-down mode - turn the volume down
+    if:
+      - condition: template
+        value_template: "{{ saved_volumes | length > 0 }}"
+    then:
+      - action: media_player.volume_set
+        continue_on_error: true
+        target:
+          entity_id: "{{ saved_volumes | map(attribute='entity') | list }}"
+        data:
+          volume_level: "{{ (duck_level | float(15)) / 100 }}"
+  - if:
+      - condition: template
+        value_template: "{{ resume and saved_volumes | length > 0 }}"
+    then:
+      - delay:
+          seconds: !input resume_after
+      - repeat:
+          for_each: "{{ saved_volumes }}"
+          sequence:
+            - action: media_player.volume_set
+              continue_on_error: true
+              target:
+                entity_id: "{{ repeat.item.entity }}"
+              data:
+                volume_level: "{{ repeat.item.volume }}"
   - if:
       - condition: template
         value_template: "{{ resume and was_playing | length > 0 }}"
