@@ -279,6 +279,30 @@ def song_out(song: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def artist_key(name: str) -> str:
+    """Loose form of an artist name for matching: 'The Allman Brothers Band' ==
+    'Allman Brothers Band', 'Simon & Garfunkel' == 'Simon and Garfunkel'."""
+    n = name.casefold().replace("&", " and ")
+    n = n[4:] if n.startswith("the ") else n
+    return "".join(ch for ch in n if ch.isalnum())
+
+
+def deezer_pick(name: str, data: Any) -> str | None:
+    """From a Deezer artist search, the photo URL of the artist with exactly this name.
+    Never a near miss (better no photo than the wrong band), never Deezer's placeholder."""
+    want = artist_key(name)
+    if not want or not isinstance(data, dict):
+        return None
+    for hit in data.get("data") or []:
+        if not isinstance(hit, dict) or artist_key(str(hit.get("name", ""))) != want:
+            continue
+        if not hit.get("md5_image"):  # Deezer has no photo for this artist
+            return None
+        url = hit.get("picture_medium") or hit.get("picture_big")
+        return url if isinstance(url, str) and url.startswith("https://") else None
+    return None
+
+
 STATION_DEFAULTS: dict[str, str] = {
     "type": "r", "genre": "", "broadcaster": "", "language": "", "country": "",
     "region": "", "bitrate": "", "format": "", "geo_fenced": "No", "home_page": "",

@@ -56,8 +56,18 @@ button.ic ha-icon { --mdc-icon-size:26px; }
 .alb .nm { margin-top:6px; font-size:14px; }
 .list .row { display:flex; align-items:center; gap:10px; padding:9px 6px; border-bottom:1px solid var(--divider-color); cursor:pointer; }
 .list .row:hover { background:var(--secondary-background-color); }
-.av { width:36px; height:36px; border-radius:50%; background:var(--secondary-background-color); display:flex; align-items:center;
-      justify-content:center; font-weight:500; flex:none; }
+.av { width:40px; height:40px; border-radius:50%; background:var(--secondary-background-color); display:flex; align-items:center;
+      justify-content:center; font-weight:500; flex:none; position:relative; overflow:hidden; }
+.av img, .head .av img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border-radius:0; }
+.agrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:16px 12px; }
+.agrid .art { cursor:pointer; text-align:center; min-width:0; }
+.agrid .av { width:100%; height:auto; aspect-ratio:1; font-size:40px; }
+.agrid .nm { margin-top:6px; font-size:14px; }
+.seg { display:inline-flex; border:1px solid var(--divider-color); border-radius:8px; overflow:hidden; margin-left:auto; }
+.seg button { border:none; border-radius:0; padding:6px 10px; background:none; color:var(--secondary-text-color); }
+.seg button.on { background:var(--primary-color); color:var(--text-primary-color, #fff); }
+.bar2 { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+.bar2 .letters { margin-bottom:0; }
 .chips { display:flex; flex-wrap:wrap; gap:8px; }
 .chip { padding:8px 14px; border-radius:18px; border:1px solid var(--divider-color); background:var(--card-background-color); cursor:pointer; }
 .head { display:flex; gap:16px; align-items:flex-end; margin:6px 0 14px; flex-wrap:wrap; }
@@ -81,13 +91,15 @@ h3 { font-size:15px; font-weight:500; margin:16px 0 8px; }
 // The self-building dashboard can re-create this card (e.g. when favourites change).
 // Remember where the user was for the life of the page.
 const VIEW = {};
-const VIEW_KEYS = ["entry", "mode", "stack", "letter", "query"];
+const VIEW_KEYS = ["entry", "mode", "stack", "letter", "query", "artistView"];
 
 class MoodeLibraryCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this.s = { boxes: [], entry: null, mode: "artists", stack: [], letter: "", query: "",
+    let artistView = "list";
+    try { artistView = localStorage.getItem("moode-artist-view") || "list"; } catch (e) { /* storage blocked */ }
+    this.s = { boxes: [], entry: null, mode: "artists", stack: [], letter: "", query: "", artistView,
                data: {}, page: null, limit: PAGE, busy: "", toast: "" };
     VIEW_KEYS.forEach((k) => { if (VIEW[k] !== undefined) this.s[k] = VIEW[k]; });
   }
@@ -204,6 +216,25 @@ class MoodeLibraryCard extends HTMLElement {
       <button class="ic" data-act="next" title="Next">${icon("skip-next")}</button></div>`;
   }
 
+  avatar(a, size = "") {
+    return `<div class="av"${size}>${esc(firstLetter(a.name))}${a.image ? `<img loading="lazy" src="${esc(a.image)}" alt="" onerror="this.remove()">` : ""}</div>`;
+  }
+
+  // artists as a list or a grid of photos (the user's choice, remembered)
+  artistsHtml(list) {
+    this._artists = list;
+    if (this.s.artistView === "grid")
+      return `<div class="agrid">${list.map((a, i) => `<div class="art" data-art="${i}">${this.avatar(a)}<div class="nm">${esc(a.name)}</div></div>`).join("")}</div>`;
+    return `<div class="list">${list.map((a, i) =>
+      `<div class="row" data-art="${i}">${this.avatar(a)}<div class="nm">${esc(a.name)}</div></div>`).join("")}</div>`;
+  }
+
+  viewToggle() {
+    const v = this.s.artistView;
+    return `<div class="seg"><button class="${v === "list" ? "on" : ""}" data-view="list" title="List">${icon("view-list")}</button>`
+      + `<button class="${v === "grid" ? "on" : ""}" data-view="grid" title="Grid">${icon("view-grid")}</button></div>`;
+  }
+
   albumGrid(albums, showArtist = true) {
     const shown = albums.slice(0, this.s.limit);
     this._albums = shown;
@@ -235,18 +266,15 @@ class MoodeLibraryCard extends HTMLElement {
       if (!r) body = `<p class="hint">Type at least two letters.</p>`;
       else if (!r.artists.length && !r.albums.length && !r.tracks.length) body = `<p class="hint">Nothing found for “${esc(s.query)}”.</p>`;
       else {
-        this._artists = r.artists; this._songs = r.tracks;
-        body = (r.artists.length ? `<h3>Artists</h3><div class="list">${r.artists.map((a, i) =>
-                `<div class="row" data-art="${i}"><div class="av">${esc(firstLetter(a))}</div><div class="nm">${esc(a)}</div></div>`).join("")}</div>` : "")
+        this._songs = r.tracks;
+        body = (r.artists.length ? `<h3>Artists</h3>${this.artistsHtml(r.artists)}` : "")
           + (r.albums.length ? `<h3>Albums</h3>${this.albumGrid(r.albums)}` : "")
           + (r.tracks.length ? `<h3>Songs</h3>${this.songsHtml(r.tracks)}` : "");
       }
     } else if (s.mode === "artists" && s.data.artists) {
-      const list = this.byLetter(s.data.artists, (a) => a).sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
+      const list = this.byLetter(s.data.artists, (a) => a.name).sort((a, b) => sortKey(a.name).localeCompare(sortKey(b.name)));
       const shown = list.slice(0, s.limit);
-      this._artists = shown;
-      body = this.lettersHtml(s.data.artists, (a) => a) + `<div class="list">${shown.map((a, i) =>
-        `<div class="row" data-art="${i}"><div class="av">${esc(firstLetter(a))}</div><div class="nm">${esc(a)}</div></div>`).join("")}</div>`
+      body = `<div class="bar2">${this.lettersHtml(s.data.artists, (a) => a.name)}${this.viewToggle()}</div>` + this.artistsHtml(shown)
         + (list.length > shown.length ? `<button class="more" data-act="more">Show more (${list.length - shown.length} left)</button>` : "");
     } else if (s.mode === "albums" && s.data.albums) {
       body = this.lettersHtml(s.data.albums, (a) => a.album) + this.albumGrid(this.byLetter(s.data.albums, (a) => a.album));
@@ -297,19 +325,18 @@ class MoodeLibraryCard extends HTMLElement {
     }
     if (p.type === "artist") {
       const albums = d.albums || [];
-      return crumb + `<div class="head" style="align-items:center"><div class="av" style="width:72px;height:72px;font-size:30px">${esc(firstLetter(p.artist))}</div>
+      return crumb + `<div class="head" style="align-items:center">${this.avatar({ name: p.artist, image: p.image }, ' style="width:160px;height:160px;font-size:56px"')}
           <div><h2>${esc(p.artist)}</h2><div class="sub">${albums.length} album${albums.length === 1 ? "" : "s"}</div>
           <div class="ctrls"><button class="pri" data-act="shuffle-artist">${icon("shuffle-variant")} Shuffle</button><button data-act="play-artist">${icon("play")} Play all</button>
             <button data-act="queue-artist">${icon("playlist-plus")} Add to queue</button></div></div></div>` + this.albumGrid(albums, false);
     }
     if (p.type === "genre") {
       const arts = d.artists || [];
-      this._artists = arts;
       return crumb + `<div class="head" style="align-items:center"><div><h2>${esc(p.genre)}</h2>
           <div class="sub">${arts.length} artists · ${(d.albums || []).length} albums</div>
           <div class="ctrls"><button class="pri" data-act="shuffle-genre">${icon("shuffle-variant")} Shuffle ${esc(p.genre)}</button>
             <button data-act="play-genre">${icon("play")} Play all</button></div></div></div>
-        <h3>Artists</h3><div class="chips">${arts.map((a, i) => `<span class="chip" data-art="${i}">${esc(a)}</span>`).join("")}</div>
+        <div class="bar2" style="margin-top:16px"><h3 style="margin:0">Artists</h3>${this.viewToggle()}</div>${this.artistsHtml(arts)}
         <h3>Albums</h3>${this.albumGrid(d.albums || [])}`;
     }
     return crumb;
@@ -361,14 +388,19 @@ class MoodeLibraryCard extends HTMLElement {
       }, 400);
     });
     root.querySelector(".wrap").addEventListener("click", (e) => {
-      const el = e.target.closest("[data-act],[data-mode],[data-letter],[data-alb],[data-art],[data-gen],[data-trk],[data-song]");
+      const el = e.target.closest("[data-act],[data-mode],[data-letter],[data-alb],[data-art],[data-gen],[data-trk],[data-song],[data-view]");
       if (!el) return;
       const d = el.dataset;
       const top = this.s.stack[this.s.stack.length - 1];
       if (d.mode) { this.s.mode = d.mode; this.s.letter = ""; this.s.limit = PAGE; this.s.query = ""; return this.load(); }
       if (d.letter !== undefined) { if (!el.classList.contains("off")) { this.s.letter = d.letter; this.s.limit = PAGE; this.save(); this.render(); } return; }
       if (d.alb !== undefined) { const a = this._albums[+d.alb]; return this.open({ type: "album", artist: a.artist, album: a.album }); }
-      if (d.art !== undefined) return this.open({ type: "artist", artist: this._artists[+d.art] });
+      if (d.art !== undefined) { const a = this._artists[+d.art]; return this.open({ type: "artist", artist: a.name, image: a.image }); }
+      if (d.view) {
+        this.s.artistView = d.view; this.save();
+        try { localStorage.setItem("moode-artist-view", d.view); } catch (err) { /* storage blocked */ }
+        return this.render();
+      }
       if (d.gen !== undefined) return this.open({ type: "genre", genre: this._genres[+d.gen] });
       if (d.trk !== undefined) return this.play("album", { artist: top.artist, album: top.album, position: +d.trk }, `“${this._tracks[+d.trk].title}”`);
       if (d.song !== undefined) return this.playSong(this._songs[+d.song]);
@@ -380,7 +412,7 @@ class MoodeLibraryCard extends HTMLElement {
         case "next": return this.player("media_next_track");
         case "pp": return this.player("media_play_pause");
         case "shuffle-all": return this.play("all", { shuffle: true }, "your whole library");
-        case "artist": return this.open({ type: "artist", artist: top.artist });
+        case "artist": return this.open({ type: "artist", artist: top.artist, image: this.s.page?.artist_image });
         case "genre": return this.open({ type: "genre", genre: this._tracks.find((x) => x.genre)?.genre });
         case "play-album": return this.play("album", { artist: top.artist, album: top.album }, top.album);
         case "shuffle-album": return this.play("album", { artist: top.artist, album: top.album, shuffle: true }, top.album);

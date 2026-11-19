@@ -777,3 +777,16 @@ def test_cover_url_encodes_the_whole_path():
     c = api.MoodeClient("10.0.0.5", None)
     assert c.cover_url("NVME/AC DC/Back in Black/01 #1?.flac") == \
         "http://10.0.0.5/coverart.php/NVME%2FAC%20DC%2FBack%20in%20Black%2F01%20%231%3F.flac"
+
+
+def test_deezer_artist_matching():
+    hit = lambda name, md5="abc", pic="https://cdn/p.jpg": {"name": name, "md5_image": md5, "picture_medium": pic}
+    assert api.deezer_pick("AC/DC", {"data": [hit("AC/DC")]}) == "https://cdn/p.jpg"
+    assert api.deezer_pick("The Allman Brothers Band", {"data": [hit("Allman Brothers Band")]}) == "https://cdn/p.jpg"
+    assert api.deezer_pick("Simon & Garfunkel", {"data": [hit("Simon and Garfunkel")]}) == "https://cdn/p.jpg"
+    # the right one even when it isn't the first hit
+    assert api.deezer_pick("Asia", {"data": [hit("Asian Dub Foundation", pic="https://x/wrong.jpg"), hit("Asia")]}) == "https://cdn/p.jpg"
+    assert api.deezer_pick("America", {"data": [hit("America's Best")]}) is None     # no near misses
+    assert api.deezer_pick("Obscure", {"data": [hit("Obscure", md5="")]}) is None    # Deezer placeholder
+    assert api.deezer_pick("X", {"data": [hit("X", pic="http://insecure/p.jpg")]}) is None
+    assert api.deezer_pick("X", None) is None and api.deezer_pick("", {"data": []}) is None

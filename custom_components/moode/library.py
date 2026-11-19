@@ -4,8 +4,12 @@ database; cover art comes from moOde's coverart.php through an authenticated pro
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import time
 from collections import OrderedDict
+from pathlib import Path
 from datetime import timedelta
 from typing import Any
 from urllib.parse import urlencode
@@ -21,13 +25,16 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import MoodeError
-from .const import DOMAIN
+from .api import MoodeError, artist_key, deezer_pick
+from .const import CONF_ARTIST_IMAGES, DOMAIN, opt
 from .zones import receiver_ids, wake_zone_if_silent
 
 _LOGGER = logging.getLogger(__name__)
 
 COVER_PATH = "/api/moode/cover"
+ARTIST_PATH = "/api/moode/artist"
+DEEZER_SEARCH = "https://api.deezer.com/search/artist"
+NO_PHOTO_RETRY = 30 * 24 * 3600  # ask Deezer again about artists it had no photo for
 COVER_MAX_BYTES = 6_000_000
 SIGN_FOR = timedelta(hours=24)
 
@@ -48,6 +55,14 @@ def _cover(hass: HomeAssistant, entry_id: str, artist: str, album: str) -> str:
     return async_sign_path(hass, f"{COVER_PATH}/{entry_id}?{query}", SIGN_FOR)
 
 
+def _artist_img(hass: HomeAssistant, entry_id: str, name: str) -> str:
+    return async_sign_path(hass, f"{ARTIST_PATH}/{entry_id}?{urlencode({'name': name})}", SIGN_FOR)
+
+
+def _artists_out(hass: HomeAssistant, entry_id: str, names: list[str]) -> list[dict[str, str]]:
+    return [{"name": n, "image": _artist_img(hass, entry_id, n)} for n in names]
+
+
 def _albums_out(hass: HomeAssistant, entry_id: str, albums: list[dict[str, str]]) -> list[dict[str, str]]:
     return [{**a, "cover": _cover(hass, entry_id, a["artist"], a["album"])} for a in albums]
 
@@ -61,6 +76,44 @@ def _entity_for(hass: HomeAssistant, entry_id: str, suffix: str) -> str | None:
 
 def _err(connection, msg_id, err: Exception) -> None:
     connection.send_error(msg_id, "moode_error", str(err))
+
+
+async def _download_image(hass: HomeAssistant, url: str, limit: int = COVER_MAX_BYTES) -> tuple[bytes, str] | None:
+    try:
+        async with async_get_clientsession(hass).get(url, timeout=ClientTimeout(total=15)) as r:
+            ctype = r.headers.get("Content-Type", "").split(";")[0]
+            if r.status != 200 or not ctype.startswith("image/"):
+                return None
+            body = bytearray()
+            async for chunk in r.content.iter_chunked(64 * 1024):  # the WHOLE image
+                body.extend(chunk)
+                if len(body) > limit:
+                    return None
+            return bytes(body), ctype
+    except (ClientError, asyncio.TimeoutError, OSError):
+        return None
+
+
+async def _album_cover(hass: HomeAssistant, entry_id: str, client, artist: str, album: str) -> tuple[bytes, str] | None:
+    key = (entry_id, artist, album)
+    if key in _first_file:
+        _first_file.move_to_end(key)
+        file = _first_file[key]
+    else:
+        try:
+            file = await client.lib_first_file(artist, album)
+        except MoodeError:
+            return None
+        _first_file[key] = file
+        while len(_first_file) > _FIRST_FILE_MAX:
+            _first_file.popitem(last=False)
+    return await _download_image(hass, client.cover_url(file)) if file else None
+
+
+def _image_response(img: tuple[bytes, str] | None, max_age: int = 604800) -> web.Response:
+    if not img:
+        return web.Response(status=404)
+    return web.Response(body=img[0], content_type=img[1], headers={"Cache-Control": f"private, max-age={max_age}"})
 
 
 class MoodeCoverView(HomeAssistantView):
@@ -80,41 +133,138 @@ class MoodeCoverView(HomeAssistantView):
             client = _entry(hass, entry_id).runtime_data.client
         except ValueError:
             return web.Response(status=404)
-        key = (entry_id, artist, album)
-        if key in _first_file:
-            _first_file.move_to_end(key)
-            file = _first_file[key]
-        else:
+        return _image_response(await _album_cover(hass, entry_id, client, artist, album))
+
+
+class ArtistPhotos:
+    """Artist photos from Deezer, kept on disk under .storage/moode/artists so each artist
+    is looked up once. No photo (or no exact name match) is remembered too, and retried
+    after a month."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+        self.folder = Path(hass.config.path(".storage", "moode", "artists"))
+        self.index_file = self.folder / "index.json"
+        self.index: dict[str, dict[str, Any]] | None = None
+        self.locks: dict[str, asyncio.Lock] = {}
+        self.limit = asyncio.Semaphore(3)  # be gentle with Deezer
+        self._save_handle = None
+
+    async def _load(self) -> None:
+        if self.index is None:
+            def read() -> dict:
+                try:
+                    return json.loads(self.index_file.read_text("utf-8"))
+                except (OSError, ValueError):
+                    return {}
+            self.index = await self.hass.async_add_executor_job(read)
+
+    def _schedule_save(self) -> None:
+        if self._save_handle:
+            self._save_handle.cancel()
+        self._save_handle = self.hass.loop.call_later(
+            5, lambda: self.hass.async_create_task(self._save())
+        )
+
+    async def _save(self) -> None:
+        data = json.dumps(self.index)
+        def write() -> None:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            tmp = self.index_file.with_suffix(".tmp")
+            tmp.write_text(data, "utf-8")
+            tmp.replace(self.index_file)
+        await self.hass.async_add_executor_job(write)
+
+    async def get(self, name: str) -> bytes | None:
+        key = artist_key(name)
+        if not key:
+            return None
+        await self._load()
+        async with self.locks.setdefault(key, asyncio.Lock()):
+            hit = self.index.get(key)
+            if hit and hit.get("file"):
+                path = self.folder / hit["file"]
+                data = await self.hass.async_add_executor_job(_read_bytes, path)
+                if data:
+                    return data
+            elif hit and time.time() - hit.get("checked", 0) < NO_PHOTO_RETRY:
+                return None
+            data = await self._lookup(name)
+            entry: dict[str, Any] = {"name": name, "checked": int(time.time()), "file": None}
+            if data:
+                fname = hashlib.sha1(key.encode()).hexdigest()[:16] + ".jpg"
+                await self.hass.async_add_executor_job(_write_bytes, self.folder / fname, data)
+                entry["file"] = fname
+            self.index[key] = entry
+            self._schedule_save()
+            return data
+
+    async def _lookup(self, name: str) -> bytes | None:
+        async with self.limit:
             try:
-                file = await client.lib_first_file(artist, album)
-            except MoodeError:
-                return web.Response(status=404)
-            _first_file[key] = file
-            while len(_first_file) > _FIRST_FILE_MAX:
-                _first_file.popitem(last=False)
-        if not file:
+                async with async_get_clientsession(self.hass).get(
+                    DEEZER_SEARCH, params={"q": name, "limit": "10"}, timeout=ClientTimeout(total=10)
+                ) as r:
+                    if r.status != 200:
+                        return None
+                    url = deezer_pick(name, await r.json(content_type=None))
+            except (ClientError, asyncio.TimeoutError, OSError, ValueError):
+                return None
+            if not url:
+                return None
+            img = await _download_image(self.hass, url, 1_000_000)
+            return img[0] if img else None
+
+
+def _read_bytes(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
+class MoodeArtistView(HomeAssistantView):
+    """Artist pictures: a photo from Deezer (if allowed in the box's options), otherwise
+    the cover of one of the artist's albums."""
+
+    url = ARTIST_PATH + "/{entry_id}"
+    name = "api:moode:artist"
+    requires_auth = True
+
+    async def get(self, request: web.Request, entry_id: str) -> web.Response:
+        hass = request.app["hass"]
+        name = request.query.get("name")
+        if not name:
             return web.Response(status=404)
         try:
-            async with async_get_clientsession(hass).get(
-                client.cover_url(file), timeout=ClientTimeout(total=15)
-            ) as r:
-                ctype = r.headers.get("Content-Type", "").split(";")[0]
-                if r.status != 200 or not ctype.startswith("image/"):
-                    return web.Response(status=404)
-                body = bytearray()
-                async for chunk in r.content.iter_chunked(64 * 1024):
-                    body.extend(chunk)
-                    if len(body) > COVER_MAX_BYTES:
-                        return web.Response(status=404)
-        except (ClientError, asyncio.TimeoutError, OSError):
+            entry = _entry(hass, entry_id)
+        except ValueError:
             return web.Response(status=404)
-        return web.Response(body=bytes(body), content_type=ctype,
-                            headers={"Cache-Control": "private, max-age=604800"})
+        if opt(entry, CONF_ARTIST_IMAGES):
+            photo = await hass.data[DOMAIN + "_artist_photos"].get(name)
+            if photo:
+                return _image_response((photo, "image/jpeg"))
+        client = entry.runtime_data.client
+        try:
+            albums = await client.lib_albums(name)
+        except MoodeError:
+            return web.Response(status=404)
+        for a in albums[:3]:
+            if img := await _album_cover(hass, entry_id, client, a["artist"], a["album"]):
+                return _image_response(img, 86400)
+        return web.Response(status=404)
 
 
 @callback
 def async_setup_library(hass: HomeAssistant) -> None:
+    hass.data[DOMAIN + "_artist_photos"] = ArtistPhotos(hass)
     hass.http.register_view(MoodeCoverView())
+    hass.http.register_view(MoodeArtistView())
     for cmd in (ws_boxes, ws_artists, ws_albums, ws_genres, ws_tracks, ws_search, ws_recent, ws_play):
         websocket_api.async_register_command(hass, cmd)
 
@@ -155,7 +305,7 @@ async def ws_artists(hass, connection, msg):
         artists = await _entry(hass, msg["entry_id"]).runtime_data.client.lib_artists(msg.get("genre"))
     except (ValueError, MoodeError) as err:
         return _err(connection, msg["id"], err)
-    connection.send_result(msg["id"], artists)
+    connection.send_result(msg["id"], _artists_out(hass, msg["entry_id"], artists))
 
 
 @_cmd("albums", {vol.Optional("artist"): str, vol.Optional("genre"): str})
@@ -189,6 +339,7 @@ async def ws_tracks(hass, connection, msg):
     connection.send_result(msg["id"], {
         "tracks": tracks,
         "cover": _cover(hass, msg["entry_id"], msg["artist"], msg["album"]),
+        "artist_image": _artist_img(hass, msg["entry_id"], msg["artist"]),
     })
 
 
@@ -213,7 +364,7 @@ async def ws_search(hass, connection, msg):
                               {"album": t["album"], "artist": t["album_artist"], "year": t["year"]})
     songs = [t for t in tracks if ql in t["title"].casefold()][:100]
     connection.send_result(msg["id"], {
-        "artists": artists[:50],
+        "artists": _artists_out(hass, msg["entry_id"], artists[:50]),
         "albums": _albums_out(hass, msg["entry_id"], list(albums.values())[:60]),
         "tracks": songs,
     })

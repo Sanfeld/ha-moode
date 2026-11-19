@@ -79,7 +79,8 @@
           "sleep": "Sleep timer",
           "announce": "Announcements",
           "volume": "Volume control",
-          "amplifier": "Amplifier"
+          "amplifier": "Amplifier",
+          "library": "Music library"
         }
       },
       "zone": {
@@ -129,6 +130,13 @@
         "description": "The amplifier or receiver this box is plugged into. The dashboard then shows its power, volume and input next to the box. Leave empty if there's none.",
         "data": {
           "amplifier": "Amplifier"
+        }
+      },
+      "library": {
+        "title": "Music library",
+        "description": "The FLACs tab on the moOde dashboard shows the music stored on this box. Artist photos are looked up on Deezer (only the artist name is sent) and kept on your Home Assistant. Without them, artists are shown with one of their album covers.",
+        "data": {
+          "artist_images": "Artist photos from Deezer"
         }
       }
     },

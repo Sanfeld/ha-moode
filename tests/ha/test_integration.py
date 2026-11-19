@@ -91,6 +91,7 @@ async def test_library_websocket(hass: HomeAssistant, mock_moode, hass_ws_client
               AsyncMock(return_value={"songs": 4, "artists": 1, "albums": 1})),
         patch("custom_components.moode.api.MoodeClient.lib_albums", AsyncMock(return_value=albums)),
         patch("custom_components.moode.api.MoodeClient.lib_play", AsyncMock()) as lib_play,
+        patch("custom_components.moode.api.MoodeClient.lib_artists", AsyncMock(return_value=["AC/DC"])),
     ):
         client = await hass_ws_client(hass)
         await client.send_json_auto_id({"type": "moode/library/boxes"})
@@ -102,6 +103,11 @@ async def test_library_websocket(hass: HomeAssistant, mock_moode, hass_ws_client
         out = (await client.receive_json())["result"]
         assert out[0]["album"] == "Back in Black"
         assert out[0]["cover"].startswith(f"/api/moode/cover/{entry.entry_id}?") and "authSig=" in out[0]["cover"]
+
+        await client.send_json_auto_id({"type": "moode/library/artists", "entry_id": entry.entry_id})
+        arts = (await client.receive_json())["result"]
+        assert arts[0]["name"] == "AC/DC"
+        assert arts[0]["image"].startswith(f"/api/moode/artist/{entry.entry_id}?name=AC%2FDC") and "authSig=" in arts[0]["image"]
 
         await client.send_json_auto_id({"type": "moode/library/play", "entry_id": entry.entry_id,
                                         "what": "genre", "genre": "Hard Rock", "shuffle": True})

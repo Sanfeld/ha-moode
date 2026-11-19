@@ -22,6 +22,7 @@ CONF_ANN_RESUME = "announce_resume"
 CONF_ANN_ALL_ROOMS = "announce_all_rooms"
 CONF_ANN_LEAD_IN = "announce_lead_in"
 CONF_ANN_MAX = "announce_max_seconds"
+CONF_ARTIST_IMAGES = "artist_images"  # look up artist photos online (Deezer)
 
 DEFAULTS = {
     CONF_VOLUME_MODE: "auto",
@@ -33,6 +34,7 @@ DEFAULTS = {
     CONF_ANN_ALL_ROOMS: True,
     CONF_ANN_LEAD_IN: 1.0,
     CONF_ANN_MAX: 60,
+    CONF_ARTIST_IMAGES: True,
 }
 
 

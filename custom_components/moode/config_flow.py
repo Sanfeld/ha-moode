@@ -31,6 +31,7 @@ from .const import (
     CONF_ANN_LEAD_IN,
     CONF_ANN_MAX,
     CONF_ANN_RESUME,
+    CONF_ARTIST_IMAGES,
     CONF_FAV_WAKE_ZONE,
     CONF_VOLUME_MODE,
     CONF_FAVOURITES,
@@ -183,7 +184,7 @@ class MoodeOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["zone", "favourites", "amplifier", "volume", "sleep", "announce"],
+            menu_options=["zone", "favourites", "amplifier", "volume", "sleep", "announce", "library"],
             description_placeholders={"box": self.config_entry.title},
         )
 
@@ -277,6 +278,19 @@ class MoodeOptionsFlow(OptionsFlow):
                 vol.Required(CONF_VOLUME_MODE, default=opt(entry, CONF_VOLUME_MODE)): SelectSelector(
                     SelectSelectorConfig(options=["auto", "fixed", "variable"], translation_key="volume_mode")
                 ),
+            }),
+        )
+
+    # ---- music library ---------------------------------------------------------
+
+    async def async_step_library(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        entry = self.config_entry
+        if user_input is not None:
+            return self._save(**user_input)
+        return self.async_show_form(
+            step_id="library",
+            data_schema=vol.Schema({
+                vol.Required(CONF_ARTIST_IMAGES, default=opt(entry, CONF_ARTIST_IMAGES)): bool,
             }),
         )
 

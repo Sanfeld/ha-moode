@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 (unreleased)
+
+- FLACs tab: artist photos (from Deezer, cached on Home Assistant; falls back to one of
+  the artist's album covers). Can be switched off per box: Configure → Music library
+- FLACs tab: show artists as a list or a grid (remembered)
+
 ## 1.1.0 (2026-11-19)
 
 - New **FLACs** tab on the moOde dashboard: the music library stored on your boxes
