@@ -495,11 +495,34 @@ def _station_key(r: dict) -> tuple:
 
 
 async def _logo_digest(hass: HomeAssistant, url: str) -> str | None:
+    """A cheap fingerprint of a logo file: moOde's web server reports its ETag / date / size
+    on a HEAD request, so the picture itself isn't downloaded. Falls back to the bytes."""
+    try:
+        async with async_get_clientsession(hass).head(url, timeout=ClientTimeout(total=5)) as r:
+            if r.status == 404:
+                return None
+            if r.status == 200:
+                tag = "|".join(r.headers.get(h, "") for h in ("ETag", "Last-Modified", "Content-Length"))
+                if tag.strip("|"):
+                    return tag
+    except Exception:  # noqa: BLE001 - any trouble with HEAD: just download it instead
+        pass
     data = await _fetch_data_url(hass, url)
     return hashlib.sha1(data.encode()).hexdigest() if data else None
 
 
-_LOGO_STORE = "moode_station_sync"
+async def _logo_digests(hass: HomeAssistant, client, names: list[str]) -> dict[str, str | None]:
+    """Fingerprints of many logos, several at a time."""
+    limit = asyncio.Semaphore(8)
+
+    async def one(name: str) -> tuple[str, str | None]:
+        async with limit:
+            return name, await _logo_digest(hass, client.logo_url(name))
+
+    return dict(await asyncio.gather(*(one(n) for n in names)))
+
+
+_LOGO_STORE = "moode_station_sync_v2"  # v2: HEAD fingerprints (v1 hashed the bytes)
 
 
 async def _logo_memory(hass: HomeAssistant) -> tuple[Store, dict]:
@@ -534,7 +557,7 @@ async def _sync_stations(hass: HomeAssistant, source_id: str, target_ids: list[s
     src_by = {r["name"].casefold(): r for r in src_rows}
     store, memory = await _logo_memory(hass)
     seen: dict[str, str | None] = memory.get(source_id, {})
-    now_logo = {r["name"]: await _logo_digest(hass, src.logo_url(r["name"])) for r in src_rows}
+    now_logo = await _logo_digests(hass, src, [r["name"] for r in src_rows])
     # first sync of this source: nothing to compare with yet, so logos count as unchanged
     logo_changed = {n for n, d in now_logo.items() if n in seen and d and seen[n] != d}
 
