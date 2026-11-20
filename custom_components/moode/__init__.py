@@ -11,17 +11,16 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.event import async_track_time_change, async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
 from .api import MoodeClient
-from .const import CONF_AUTO_SYNC, CONF_VOLUME_MODE, DOMAIN, LIBRARY_URL, PANEL_URL, PLATFORMS, STATIC_URL, STRATEGY_URL
+from .const import CONF_VOLUME_MODE, DOMAIN, LIBRARY_URL, PANEL_URL, PLATFORMS, STATIC_URL, STRATEGY_URL
 from .coordinator import MoodeCoordinator
 from .library import async_setup_library
-from .services import async_setup_services
-from .stations import async_setup_stations, run_auto_sync
+from .stations import async_setup_stations
 from .zones import role
 
 type MoodeConfigEntry = ConfigEntry[MoodeCoordinator]
@@ -43,7 +42,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Music library (FLACs tab): websocket API, cover art proxy and its card
     async_setup_library(hass)
     add_extra_js_url(hass, f"{LIBRARY_URL}?v={version}")
-    async_setup_services(hass)
     return True
 
 
@@ -68,14 +66,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: MoodeConfigEntry) -> boo
                 reg.async_update_device(dev.id, sw_version=rel)
 
     entry.async_on_unload(async_track_time_interval(hass, _check_release, timedelta(hours=6)))
-
-    if entry.options.get(CONF_AUTO_SYNC):
-        # Nightly full check: catches edits made in moOde's own web page and boxes that
-        # were offline when this one changed.
-        async def _nightly(_now) -> None:
-            await run_auto_sync(hass, entry.entry_id, "nightly")
-
-        entry.async_on_unload(async_track_time_change(hass, _nightly, hour=4, minute=15, second=0))
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     return True
 

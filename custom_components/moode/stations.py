@@ -22,6 +22,7 @@ from homeassistant.components.http.auth import async_sign_path
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_change
 
 from .api import MoodeError, clean_station_name
 from .const import CONF_AUTO_SYNC, CONF_FAVOURITES, DOMAIN
@@ -235,6 +236,20 @@ def async_setup_stations(hass: HomeAssistant) -> None:
         ws_favourite, ws_play, ws_sync, ws_backup, ws_restore, ws_update,
     ):
         websocket_api.async_register_command(hass, cmd)
+
+    # Station sync: the moode.sync_stations action, and a nightly full check (04:15) for
+    # every box that keeps the others in sync. Catches edits made in moOde's own web
+    # page and boxes that were offline when the source changed.
+    from .services import async_setup_services  # noqa: PLC0415 (services imports this module)
+
+    async_setup_services(hass)
+
+    async def _nightly(_now) -> None:
+        for e in hass.config_entries.async_entries(DOMAIN):
+            if e.state is ConfigEntryState.LOADED and e.options.get(CONF_AUTO_SYNC):
+                await run_auto_sync(hass, e.entry_id, "nightly")
+
+    async_track_time_change(hass, _nightly, hour=4, minute=15, second=0)
 
 
 def _err(connection, msg_id, err: Exception) -> None:
