@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.0 (unreleased)
+## 1.4.0 (2026-11-20)
 
 - Station sync: a box can keep the other boxes' radio stations as an exact copy of its
   own (Configure -> Station sync). Runs a minute after you edit its stations in the
