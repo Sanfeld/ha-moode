@@ -203,6 +203,15 @@ async def test_station_sync_makes_targets_a_copy(hass: HomeAssistant, mock_moode
         deleted.append((self.host, name))
         boxes[self.host] = [r for r in boxes[self.host] if r["name"] != name]
 
+    # moOde re-encodes uploaded logos: the target's copies never match the source's bytes
+    source_logo = {"A": "data:image/jpeg;base64,AA"}
+
+    async def fetch_logo(hass, url, *args, **kwargs):
+        if "192.0.2.11" in url:
+            return "data:image/jpeg;base64,REENCODED"
+        name = url.rsplit("/", 1)[-1].split(".")[0]
+        return source_logo.get(name, "data:image/jpeg;base64,SAME")
+
     src = MockConfigEntry(domain=DOMAIN, title="Streamer", unique_id="moodestreamer",
                           data={CONF_HOST: "192.0.2.10"})
     tgt = MockConfigEntry(domain=DOMAIN, title="Kitchen", unique_id="kitchenpi",
@@ -214,7 +223,7 @@ async def test_station_sync_makes_targets_a_copy(hass: HomeAssistant, mock_moode
         patch.object(api.MoodeClient, "add_station", add_station),
         patch.object(api.MoodeClient, "delete_station", delete_station),
         patch.object(api.MoodeClient, "refresh_radio_library", AsyncMock()),
-        patch("custom_components.moode.stations._fetch_data_url", AsyncMock(return_value="data:image/jpeg;base64,AA")),
+        patch("custom_components.moode.stations._fetch_data_url", AsyncMock(side_effect=fetch_logo)),
         patch.object(api.MoodeClient, "stage_station_logo", AsyncMock(return_value=False)),
     ):
         assert await hass.config_entries.async_setup(src.entry_id)
@@ -228,6 +237,16 @@ async def test_station_sync_makes_targets_a_copy(hass: HomeAssistant, mock_moode
         assert sorted(r["name"] for r in boxes["192.0.2.11"]) == ["A", "B", "C"]
         assert next(r for r in boxes["192.0.2.11"] if r["name"] == "B")["station"] == "http://b2"
         assert ("192.0.2.10", "B") not in deleted          # the source is never touched
+
+        # nothing changed: a second sync touches nothing, even though logo bytes differ
+        res = await hass.services.async_call(DOMAIN, "sync_stations", {"source": player},
+                                             blocking=True, return_response=True)
+        assert res["boxes"]["Kitchen"] == {"added": 0, "updated": 0, "removed": 0, "failed": []}
+        # a logo changed on the source: just that station is sent again
+        source_logo["A"] = "data:image/jpeg;base64,NEWLOGO"
+        res = await hass.services.async_call(DOMAIN, "sync_stations", {"source": player},
+                                             blocking=True, return_response=True)
+        assert res["boxes"]["Kitchen"]["updated"] == 1
 
         # automatic: an edit on the source syncs the others a minute later
         boxes["192.0.2.10"].append({"name": "E", "station": "http://e"})

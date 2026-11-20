@@ -23,6 +23,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.storage import Store
 
 from .api import MoodeError, clean_station_name
 from .const import CONF_AUTO_SYNC, CONF_FAVOURITES, DOMAIN
@@ -498,20 +499,44 @@ async def _logo_digest(hass: HomeAssistant, url: str) -> str | None:
     return hashlib.sha1(data.encode()).hexdigest() if data else None
 
 
+_LOGO_STORE = "moode_station_sync"
+
+
+async def _logo_memory(hass: HomeAssistant) -> tuple[Store, dict]:
+    """What each source box's logos looked like at its last sync. moOde re-encodes every
+    uploaded logo, so a target's copy never matches the source byte for byte; instead a
+    logo is sent again only when the SOURCE's logo changed since the last sync."""
+    key = DOMAIN + "_logo_memory"
+    if key not in hass.data:
+        store = Store(hass, 1, _LOGO_STORE)
+        hass.data[key] = (store, await store.async_load() or {})
+    return hass.data[key]
+
+
+def sync_lock(hass: HomeAssistant, source_id: str) -> asyncio.Lock:
+    """One sync at a time per source box (manual, action, after-edit and nightly)."""
+    return hass.data.setdefault(DOMAIN + "_sync_locks", {}).setdefault(source_id, asyncio.Lock())
+
+
 async def sync_stations(hass: HomeAssistant, source_id: str, target_ids: list[str],
                         mirror: bool = True) -> dict[str, dict]:
+    async with sync_lock(hass, source_id):
+        return await _sync_stations(hass, source_id, target_ids, mirror)
+
+
+async def _sync_stations(hass: HomeAssistant, source_id: str, target_ids: list[str],
+                         mirror: bool = True) -> dict[str, dict]:
     """Make each target's station list match the source's: add what's missing, update
     stations whose stream, genre, country or logo differ, and (mirror) delete the rest.
     Returns a report per target. Boxes that aren't loaded are reported, not fatal."""
     src = _client(hass, source_id)
     src_rows = await src.get_stations()
     src_by = {r["name"].casefold(): r for r in src_rows}
-    src_logo: dict[str, str | None] = {}
-
-    async def source_logo(name: str) -> str | None:
-        if name not in src_logo:
-            src_logo[name] = await _logo_digest(hass, src.logo_url(name))
-        return src_logo[name]
+    store, memory = await _logo_memory(hass)
+    seen: dict[str, str | None] = memory.get(source_id, {})
+    now_logo = {r["name"]: await _logo_digest(hass, src.logo_url(r["name"])) for r in src_rows}
+    # first sync of this source: nothing to compare with yet, so logos count as unchanged
+    logo_changed = {n for n, d in now_logo.items() if n in seen and d and seen[n] != d}
 
     def as_new(r: dict) -> dict:
         return {"name": r["name"], "url": r.get("station", ""), "genre": r.get("genre", ""),
@@ -536,9 +561,7 @@ async def sync_stations(hass: HomeAssistant, source_id: str, target_ids: list[st
             t = by.get(k)
             if t is None:
                 continue
-            if _station_key(t) != _station_key(r) or (
-                await source_logo(r["name"]) != await _logo_digest(hass, tgt.logo_url(t["name"]))
-            ):
+            if _station_key(t) != _station_key(r) or r["name"] in logo_changed:
                 changed.append((t["name"], as_new(r)))
         failed: list[dict] = []
         existing = set(by)
@@ -564,6 +587,9 @@ async def sync_stations(hass: HomeAssistant, source_id: str, target_ids: list[st
         report[tid] = {"added": sum(1 for m in missing if m["name"].casefold() in done),
                        "updated": sum(1 for _, n in changed if n["name"].casefold() in done),
                        "removed": len(removed), "failed": failed}
+    if not any(r.get("error") for r in report.values()):
+        memory[source_id] = now_logo  # every target saw these logos
+        store.async_delay_save(lambda: memory, 5)
     return report
 
 
@@ -576,20 +602,18 @@ _SYNC_DELAY = 60  # seconds after the last edit, so several edits go out togethe
 
 
 async def run_auto_sync(hass: HomeAssistant, source_id: str, why: str) -> None:
-    locks = hass.data.setdefault(DOMAIN + "_sync_locks", {})
-    async with locks.setdefault(source_id, asyncio.Lock()):
-        try:
-            report = await sync_stations(hass, source_id, other_boxes(hass, source_id), mirror=True)
-        except (ValueError, MoodeError) as err:
-            _LOGGER.warning("Station sync (%s) from %s failed: %s", why, source_id, err)
-            return
-        names = {e.entry_id: e.title for e in hass.config_entries.async_entries(DOMAIN)}
-        for tid, r in report.items():
-            if r.get("error") or r.get("failed"):
-                _LOGGER.warning("Station sync (%s) to %s: %s", why, names.get(tid, tid), r)
-            else:
-                _LOGGER.info("Station sync (%s) to %s: +%s ~%s -%s", why, names.get(tid, tid),
-                             r["added"], r["updated"], r["removed"])
+    try:
+        report = await sync_stations(hass, source_id, other_boxes(hass, source_id), mirror=True)
+    except (ValueError, MoodeError) as err:
+        _LOGGER.warning("Station sync (%s) from %s failed: %s", why, source_id, err)
+        return
+    names = {e.entry_id: e.title for e in hass.config_entries.async_entries(DOMAIN)}
+    for tid, r in report.items():
+        if r.get("error") or r.get("failed"):
+            _LOGGER.warning("Station sync (%s) to %s: %s", why, names.get(tid, tid), r)
+        else:
+            _LOGGER.info("Station sync (%s) to %s: +%s ~%s -%s", why, names.get(tid, tid),
+                         r["added"], r["updated"], r["removed"])
 
 
 @callback
