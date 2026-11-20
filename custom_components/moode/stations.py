@@ -594,17 +594,19 @@ async def _sync_stations(hass: HomeAssistant, source_id: str, target_ids: list[s
                 existing.discard(old_name.casefold())
             except MoodeError as err:
                 failed.append({"name": old_name, "error": str(err)})
-        added, add_failed = await _add_many(hass, tgt, missing + [n for _, n in changed], existing)
-        failed += add_failed
         removed = []
-        if mirror:
-            for k, r in by.items():
+        if mirror:  # remove extras first: a renamed station keeps its URL, and moOde
+            for k, r in by.items():  # won't accept the new name while the old one has it
                 if k not in src_by:
                     try:
                         await tgt.delete_station(r["name"])
                         removed.append(r["name"])
+                        existing.discard(k)
                     except MoodeError as err:
                         failed.append({"name": r["name"], "error": str(err)})
+        added, add_failed = await _add_many(hass, tgt, missing + [n for _, n in changed], existing)
+        failed += add_failed
+        if mirror:
             await tgt.refresh_radio_library()
         done = {a.casefold() for a in added}
         report[tid] = {"added": sum(1 for m in missing if m["name"].casefold() in done),

@@ -195,6 +195,8 @@ async def test_station_sync_makes_targets_a_copy(hass: HomeAssistant, mock_moode
         return [dict(r) for r in boxes[self.host]]
 
     async def add_station(self, st):
+        if any(r["station"] == st["url"] for r in boxes[self.host]):  # as moOde does
+            raise api.MoodeError("A station with same URL already exists in the database")
         added.append((self.host, st["name"]))
         boxes[self.host].append({"name": st["name"], "station": st["url"], "genre": st.get("genre", "")})
         return "OK"
@@ -247,6 +249,14 @@ async def test_station_sync_makes_targets_a_copy(hass: HomeAssistant, mock_moode
         res = await hass.services.async_call(DOMAIN, "sync_stations", {"source": player},
                                              blocking=True, return_response=True)
         assert res["boxes"]["Kitchen"]["updated"] == 1
+
+        # a station renamed on the source (same URL): the old name goes before the new one comes
+        boxes["192.0.2.10"] = [{**r, "name": "C renamed"} if r["name"] == "C" else r
+                               for r in boxes["192.0.2.10"]]
+        res = await hass.services.async_call(DOMAIN, "sync_stations", {"source": player},
+                                             blocking=True, return_response=True)
+        assert res["boxes"]["Kitchen"] == {"added": 1, "updated": 0, "removed": 1, "failed": []}
+        assert sorted(r["name"] for r in boxes["192.0.2.11"]) == ["A", "B", "C renamed"]
 
         # automatic: an edit on the source syncs the others a minute later
         boxes["192.0.2.10"].append({"name": "E", "station": "http://e"})

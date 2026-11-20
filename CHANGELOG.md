@@ -8,6 +8,7 @@
 - New action `moode.sync_stations` (for automations/scripts), with a report per box
 - Syncing now also updates stations that changed on the source (stream, genre, country,
   logo), not only missing ones; logos are re-sent only when the source's logo changed
+- Renamed stations sync correctly (old name removed before the new one is added)
 - Fast: logo changes are detected from the web server's file stamps, several at a time
 
 ## 1.3.1 (2026-11-20)
