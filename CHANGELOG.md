@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.0 (unreleased)
+## 1.3.0 (2026-11-20)
 
 - Each box only gets the controls that fit its role: no room mode, room station or
   receiver switch on a sender, no station pickers on a zone's rooms. No more entities that
