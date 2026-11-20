@@ -249,8 +249,8 @@ class MoodeStationsPanel extends HTMLElement {
     const list = Array.isArray(data) ? data : data?.stations;
     if (!Array.isArray(list) || !list.length || !list[0].name) return this.toast("That isn't a station backup file");
     const box = this.boxTitle(this.s.entry);
-    if (!confirm(`Restore ${list.length} stations${data.box ? ` (backed up from ${data.box})` : ""} to ${box}?\nStations ${box} already has are left alone.`)) return;
-    const exact = confirm(`Also make ${box} match the backup exactly?\nOK = delete stations that aren't in the backup.\nCancel = only add the missing ones.`);
+    if (!confirm(`Restore ${list.length} stations${data.box ? ` (backed up from ${data.box})` : ""} to ${box}?\n\nStations from the backup that ${box} is missing are added back, with their logos.`)) return;
+    const exact = confirm(`What about the stations on ${box} that are NOT in this backup?\n\nOK = delete them, so ${box} ends up exactly like the backup.\nCancel = keep them, and only add the missing ones.`);
     const keep = list.map((s) => s.name);
     let added = 0, removed = 0, failed = 0;
     try {
