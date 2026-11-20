@@ -191,7 +191,7 @@ async def test_station_sync_makes_targets_a_copy(hass: HomeAssistant, mock_moode
     }
     added, deleted = [], []
 
-    async def get_stations(self):
+    async def get_stations(self, *args, **kwargs):
         return [dict(r) for r in boxes[self.host]]
 
     async def add_station(self, st):
