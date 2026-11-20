@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.1 (unreleased)
+
+- Dashboard: a box that is offline keeps its place with a clear "is offline" message,
+  instead of the page rearranging itself (the zone is recognised even while its sender is down)
+- moOde 10: Volume type "Fixed (0dB)" is detected reliably (moOde 10 reports it directly);
+  no need to set Volume control to Fixed by hand any more
+
 ## 1.3.0 (2026-11-20)
 
 - Each box only gets the controls that fit its role: no room mode, room station or

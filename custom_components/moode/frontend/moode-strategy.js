@@ -60,19 +60,35 @@ class MoodeMusicStrategy extends HTMLElement {
       hass.devices?.[dev]?.name_by_user || hass.devices?.[dev]?.name || "";
     const byName = (a, b) => (a.name || "").localeCompare(b.name || "");
 
+    // Work out the layout from the registry where possible, so a box that is offline
+    // (its attributes gone) keeps its place instead of scrambling the page.
     const players = ents.filter((e) => e.entity_id.startsWith("media_player."));
-    const zones = players.filter((e) => attr(e.entity_id, "rooms"));
+    const isZone = (e) =>
+      e.translation_key === "zone" || !!attr(e.entity_id, "rooms")
+      || hass.devices?.[e.device_id]?.model === "moOde multiroom zone";
+    const zones = players.filter(isZone);
     const boxes = players
-      .filter((e) => !attr(e.entity_id, "rooms"))
+      .filter((e) => !isZone(e))
       .map((e) => ({ ...e, name: devName(e.device_id) || e.entity_id }));
-    const receivers = boxes
-      .filter((b) => attr(b.entity_id, "multiroom_role") === "receiver")
-      .sort(byName);
-    const zoneSenders = new Set(zones.map((z) => attr(z.entity_id, "sender_entity")));
+    const senderOf = (zone) => {
+      const id = attr(zone.entity_id, "sender_entity");
+      const via = hass.devices?.[zone.device_id]?.via_device_id;
+      return boxes.find((b) => b.entity_id === id) || boxes.find((b) => via && b.device_id === via);
+    };
+    const isRoom = (b) =>
+      attr(b.entity_id, "multiroom_role") === "receiver" || !!onDevice(b.device_id, "room_mode");
+    const receivers = boxes.filter(isRoom).sort(byName);
+    const zoneSenders = new Set(zones.map((z) => senderOf(z)?.entity_id).filter(Boolean));
+    const offline = (id) => st(id)?.state === "unavailable";
+    const offlineCard = (name) => ({
+      type: "markdown",
+      content: `**${name} is offline.**\n\nIts music controls come back on their own as soon as it is on the network again.`,
+      grid_options: { columns: 12 },
+    });
     const standalone = boxes
       .filter(
         (b) =>
-          attr(b.entity_id, "multiroom_role") !== "receiver" && !zoneSenders.has(b.entity_id)
+          !isRoom(b) && !zoneSenders.has(b.entity_id)
       )
       .sort(byName);
 
@@ -201,31 +217,40 @@ class MoodeMusicStrategy extends HTMLElement {
     const musicSections = [];
 
     for (const zone of zones) {
-      const senderId = attr(zone.entity_id, "sender_entity");
-      const sender = boxes.find((b) => b.entity_id === senderId);
+      const sender = senderOf(zone);
+      const name = sender?.name || devName(zone.device_id) || "Streamer";
       const cards = [
         {
           type: "heading",
-          heading: sender?.name || devName(zone.device_id) || "Streamer",
+          heading: name,
           icon: "mdi:access-point",
           badges: [{ type: "entity", entity: zone.entity_id, show_state: true, show_icon: false }],
         },
-        { type: "media-control", entity: zone.entity_id, grid_options: { columns: 12 } },
-        ...zoneButtons(zone.entity_id),
       ];
-      if (sender) cards.push(...ampCards(sender), ...stationCards(sender));
+      if (offline(zone.entity_id) || (sender && offline(sender.entity_id))) {
+        cards.push(offlineCard(name));
+        if (sender) cards.push(...ampCards(sender));
+      } else {
+        cards.push(
+          { type: "media-control", entity: zone.entity_id, grid_options: { columns: 12 } },
+          ...zoneButtons(zone.entity_id),
+        );
+        if (sender) cards.push(...ampCards(sender), ...stationCards(sender));
+      }
       musicSections.push({ type: "grid", cards });
     }
 
     for (const box of standalone) {
       musicSections.push({
         type: "grid",
-        cards: [
-          { type: "heading", heading: box.name, icon: "mdi:speaker" },
-          { type: "media-control", entity: box.entity_id, grid_options: { columns: 12 } },
-          ...ampCards(box),
-          ...stationCards(box),
-        ],
+        cards: offline(box.entity_id)
+          ? [{ type: "heading", heading: box.name, icon: "mdi:speaker" }, offlineCard(box.name), ...ampCards(box)]
+          : [
+              { type: "heading", heading: box.name, icon: "mdi:speaker" },
+              { type: "media-control", entity: box.entity_id, grid_options: { columns: 12 } },
+              ...ampCards(box),
+              ...stationCards(box),
+            ],
       });
     }
 
@@ -280,8 +305,7 @@ class MoodeMusicStrategy extends HTMLElement {
     const playback = [{ type: "heading", heading: "Playback", icon: "mdi:tune" }];
     const tts = Object.keys(hass.states).find((id) => id.startsWith("tts."));
     for (const zone of zones.length ? zones : standalone) {
-      const sender =
-        boxes.find((b) => b.entity_id === attr(zone.entity_id, "sender_entity")) || zone;
+      const sender = senderOf(zone) || zone;
       const sleep = onDevice(sender.device_id, "sleep_timer");
       const label = sender.name || devName(zone.device_id);
       if (sleep)

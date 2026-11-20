@@ -373,6 +373,9 @@ class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity):
     """Sender + its receivers as one player. On/off switches the receivers."""
 
     _attr_name = None
+    # Lets the dashboard recognise the zone even while the sender is offline
+    # (its attributes are gone then)
+    _attr_translation_key = "zone"
 
     def __init__(self, coordinator: MoodeCoordinator, entry: MoodeConfigEntry) -> None:
         super().__init__(coordinator, entry.entry_id, entry.unique_id, entry.title)

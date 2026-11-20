@@ -35,7 +35,10 @@ class FakeMoode:
     def rest(self, cmd):
         self.rest_log.append(cmd)
         if cmd == "get_volume":
-            return json.dumps({"volume": str(self.volume), "muted": "yes" if self.muted else "no"})
+            data = {"volume": str(self.volume), "muted": "yes" if self.muted else "no"}
+            if getattr(self, "moode10_scope", None):  # moOde 10 adds scope / can_volume
+                data.update(scope=self.moode10_scope, can_volume=self.moode10_scope != "fixed")
+            return json.dumps(data)
         if cmd.startswith("set_volume"):
             arg = cmd.split(" ", 1)[1]
             if arg == "-mute":
@@ -808,3 +811,26 @@ def test_moode_release():
             return first, await c.get_release()
 
     assert run(go()) == ("9.4.2", None)
+
+
+
+def test_fixed_volume_from_moode10_volume_state():
+    """moOde 10 reports can_volume: Fixed (0dB) is detected even when MPD shows a level
+    (the Kitchen box reported 0 % while set to Fixed)."""
+    box = FakeMoode()
+    box.mpd_volume = "0"
+    box.volume = 0
+
+    async def go():
+        server, c = await make(box)()
+        async with server:
+            box.moode10_scope = "fixed"
+            fixed = await c.fetch_state()
+            box.moode10_scope = "mpd"
+            box.mpd_volume = "-1"   # moOde 10 says controllable: trust it over MPD
+            variable = await c.fetch_state()
+            return fixed, variable
+
+    fixed, variable = run(go())
+    assert fixed.fixed_volume is True
+    assert variable.fixed_volume is False

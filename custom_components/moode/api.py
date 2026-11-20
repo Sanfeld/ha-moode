@@ -517,10 +517,19 @@ class MoodeClient:
         return f"{self.base_url}/imagesw/radio-logos/{sub}{quote(name, safe='')}.jpg"
 
     async def get_volume(self) -> tuple[int | None, bool]:
+        vol, muted, _can = await self.get_volume_state()
+        return vol, muted
+
+    async def get_volume_state(self) -> tuple[int | None, bool, bool | None]:
+        """(volume, muted, can_volume). moOde 10 says whether the volume can be changed
+        (False for Volume type 'Fixed (0dB)' or a renderer like Spotify; the number is then
+        just the saved knob). Older moOde doesn't say: can_volume is None."""
         data = await self.command("get_volume")
         if not isinstance(data, dict) or "volume" not in data:
             raise MoodeError(f"Unexpected get_volume answer: {data!r}")
-        return _int_or_none(data.get("volume")), _yes(data.get("muted"))
+        can = data.get("can_volume")
+        can_volume = None if can is None else (can if isinstance(can, bool) else _yes(can))
+        return _int_or_none(data.get("volume")), _yes(data.get("muted")), can_volume
 
     async def set_volume(self, level: int) -> None:
         await self.command(f"set_volume {max(0, min(100, int(level)))}")
@@ -908,7 +917,9 @@ class MoodeClient:
         # REST: volume + richer metadata. A REST hiccup (e.g. moOde answering HTTP 500)
         # only costs us the volume/metadata as long as MPD still answers.
         try:
-            st.volume, st.muted = await self.get_volume()
+            st.volume, st.muted, can_volume = await self.get_volume_state()
+            if can_volume is not None:  # moOde 10 tells us; trust it over the MPD guess
+                st.fixed_volume = not can_volume
         except MoodeError as err:
             if not mpd_ok:
                 raise
