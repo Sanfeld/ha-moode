@@ -1,11 +1,13 @@
 # Changelog
 
-## 1.3.1 (unreleased)
+## 1.3.1 (2026-11-20)
 
 - Dashboard: a box that is offline keeps its place with a clear "is offline" message,
   instead of the page rearranging itself (the zone is recognised even while its sender is down)
 - moOde 10: Volume type "Fixed (0dB)" is detected reliably (moOde 10 reports it directly);
-  no need to set Volume control to Fixed by hand any more
+  no need to set Volume control to Fixed by hand any more (needs a moOde release that
+  reports it; 10.3.7 doesn't yet, so set Volume control to Fixed in the box's options there)
+- Stations restore: clearer questions
 
 ## 1.3.0 (2026-11-20)
 
