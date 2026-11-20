@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0 (unreleased)
+
+- Station sync: a box can keep the other boxes' radio stations as an exact copy of its
+  own (Configure -> Station sync). Runs a minute after you edit its stations in the
+  Stations tab, and nightly at 04:15
+- New action `moode.sync_stations` (for automations/scripts), with a report per box
+- Syncing now also updates stations that changed on the source (stream, genre, country,
+  logo), not only missing ones
+
 ## 1.3.1 (2026-11-20)
 
 - Dashboard: a box that is offline keeps its place with a clear "is offline" message,
