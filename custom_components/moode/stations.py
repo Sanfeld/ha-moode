@@ -280,8 +280,25 @@ async def ws_list(hass, connection, msg):
         return _err(connection, msg["id"], err)
     favs = _fav_names(entry)
     out = [_station_out(hass, entry, r, favs) for r in rows]
+    if (ref := await _reference_builtins(hass, entry.entry_id)) is not None:
+        for st in out:  # a synced copy: "built-in" means built-in on the box it copies
+            st["builtin"] = st["name"].casefold() in ref
     out.sort(key=lambda s: s["name"].casefold())
     connection.send_result(msg["id"], out)
+
+
+async def _reference_builtins(hass: HomeAssistant, entry_id: str) -> set[str] | None:
+    """If another box keeps this one in sync, the names that are built-in over there.
+    moOde numbers each box's stations itself, so a copied station gets a new (user) id."""
+    for e in hass.config_entries.async_entries(DOMAIN):
+        if (e.entry_id != entry_id and e.state is ConfigEntryState.LOADED
+                and e.options.get(CONF_AUTO_SYNC)):
+            try:
+                rows = await e.runtime_data.client.get_stations()
+            except MoodeError:
+                return None
+            return {r["name"].casefold() for r in rows if _is_builtin(r)}
+    return None
 
 
 @websocket_api.websocket_command(
