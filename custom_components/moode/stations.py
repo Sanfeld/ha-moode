@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 from datetime import timedelta
 from typing import Any
@@ -21,9 +22,11 @@ from homeassistant.components.http.auth import async_sign_path
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.storage import Store
 
 from .api import MoodeError, clean_station_name
-from .const import CONF_FAVOURITES, DOMAIN
+from .const import CONF_AUTO_SYNC, CONF_FAVOURITES, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -235,6 +238,20 @@ def async_setup_stations(hass: HomeAssistant) -> None:
     ):
         websocket_api.async_register_command(hass, cmd)
 
+    # Station sync: the moode.sync_stations action, and a nightly full check (04:15) for
+    # every box that keeps the others in sync. Catches edits made in moOde's own web
+    # page and boxes that were offline when the source changed.
+    from .services import async_setup_services  # noqa: PLC0415 (services imports this module)
+
+    async_setup_services(hass)
+
+    async def _nightly(_now) -> None:
+        for e in hass.config_entries.async_entries(DOMAIN):
+            if e.state is ConfigEntryState.LOADED and e.options.get(CONF_AUTO_SYNC):
+                await run_auto_sync(hass, e.entry_id, "nightly")
+
+    async_track_time_change(hass, _nightly, hour=4, minute=15, second=0)
+
 
 def _err(connection, msg_id, err: Exception) -> None:
     connection.send_error(msg_id, "moode_error", str(err))
@@ -263,8 +280,25 @@ async def ws_list(hass, connection, msg):
         return _err(connection, msg["id"], err)
     favs = _fav_names(entry)
     out = [_station_out(hass, entry, r, favs) for r in rows]
+    if (ref := await _reference_builtins(hass, entry.entry_id)) is not None:
+        for st in out:  # a synced copy: "built-in" means built-in on the box it copies
+            st["builtin"] = st["name"].casefold() in ref
     out.sort(key=lambda s: s["name"].casefold())
     connection.send_result(msg["id"], out)
+
+
+async def _reference_builtins(hass: HomeAssistant, entry_id: str) -> set[str] | None:
+    """If another box keeps this one in sync, the names that are built-in over there.
+    moOde numbers each box's stations itself, so a copied station gets a new (user) id."""
+    for e in hass.config_entries.async_entries(DOMAIN):
+        if (e.entry_id != entry_id and e.state is ConfigEntryState.LOADED
+                and e.options.get(CONF_AUTO_SYNC)):
+            try:
+                rows = await e.runtime_data.client.get_stations()
+            except MoodeError:
+                return None
+            return {r["name"].casefold() for r in rows if _is_builtin(r)}
+    return None
 
 
 @websocket_api.websocket_command(
@@ -324,6 +358,8 @@ async def ws_delete(hass, connection, msg):
             if m.split(":", 1)[-1].rsplit("/", 1)[-1].rsplit(".", 1)[0] not in set(done)]
     if favs != entry.options.get(CONF_FAVOURITES, []):
         hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_FAVOURITES: favs})
+    if done:
+        note_stations_changed(hass, msg["entry_id"])
     connection.send_result(msg["id"], {"deleted": done, "failed": failed})
 
 
@@ -383,6 +419,8 @@ async def ws_add(hass, connection, msg):
     except (ValueError, MoodeError) as err:
         return _err(connection, msg["id"], err)
     added, failed = await _add_many(hass, client, msg["stations"], existing)
+    if added:
+        note_stations_changed(hass, msg["entry_id"])
     connection.send_result(msg["id"], {"added": added, "failed": failed})
 
 
@@ -465,23 +503,90 @@ async def ws_play(hass, connection, msg):
     connection.send_result(msg["id"], {"ok": True})
 
 
-@websocket_api.websocket_command(
-    {vol.Required("type"): "moode/stations/sync", vol.Required("source"): str,
-     vol.Required("targets"): [str], vol.Optional("mirror", default=False): bool}
-)
-@websocket_api.async_response
-async def ws_sync(hass, connection, msg):
-    """Copy the source box's stations (with logos) to other boxes.
-    mirror=True also deletes stations the source doesn't have."""
+# ------------------------------------------------------------------ station sync
+
+
+def _station_key(r: dict) -> tuple:
+    """What has to match for a target's station to count as the same as the source's."""
+    return (r.get("station", "").strip(), r.get("genre", ""), r.get("country", ""))
+
+
+async def _logo_digest(hass: HomeAssistant, url: str) -> str | None:
+    """A cheap fingerprint of a logo file: moOde's web server reports its ETag / date / size
+    on a HEAD request, so the picture itself isn't downloaded. Falls back to the bytes."""
     try:
-        src = _client(hass, msg["source"])
-        src_rows = await src.get_stations()
-    except (ValueError, MoodeError) as err:
-        return _err(connection, msg["id"], err)
-    src_names = {r["name"].casefold() for r in src_rows}
-    report = {}
-    for tid in msg["targets"]:
-        if tid == msg["source"]:
+        async with async_get_clientsession(hass).head(url, timeout=ClientTimeout(total=5)) as r:
+            if r.status == 404:
+                return None
+            if r.status == 200:
+                tag = "|".join(r.headers.get(h, "") for h in ("ETag", "Last-Modified", "Content-Length"))
+                if tag.strip("|"):
+                    return tag
+    except Exception:  # noqa: BLE001 - any trouble with HEAD: just download it instead
+        pass
+    data = await _fetch_data_url(hass, url)
+    return hashlib.sha1(data.encode()).hexdigest() if data else None
+
+
+async def _logo_digests(hass: HomeAssistant, client, names: list[str]) -> dict[str, str | None]:
+    """Fingerprints of many logos, several at a time."""
+    limit = asyncio.Semaphore(8)
+
+    async def one(name: str) -> tuple[str, str | None]:
+        async with limit:
+            return name, await _logo_digest(hass, client.logo_url(name))
+
+    return dict(await asyncio.gather(*(one(n) for n in names)))
+
+
+_LOGO_STORE = "moode_station_sync_v2"  # v2: HEAD fingerprints (v1 hashed the bytes)
+
+
+async def _logo_memory(hass: HomeAssistant) -> tuple[Store, dict]:
+    """What each source box's logos looked like at its last sync. moOde re-encodes every
+    uploaded logo, so a target's copy never matches the source byte for byte; instead a
+    logo is sent again only when the SOURCE's logo changed since the last sync."""
+    key = DOMAIN + "_logo_memory"
+    if key not in hass.data:
+        store = Store(hass, 1, _LOGO_STORE)
+        hass.data[key] = (store, await store.async_load() or {})
+    return hass.data[key]
+
+
+def sync_lock(hass: HomeAssistant, source_id: str) -> asyncio.Lock:
+    """One sync at a time per source box (manual, action, after-edit and nightly)."""
+    return hass.data.setdefault(DOMAIN + "_sync_locks", {}).setdefault(source_id, asyncio.Lock())
+
+
+async def sync_stations(hass: HomeAssistant, source_id: str, target_ids: list[str],
+                        mirror: bool = True) -> dict[str, dict]:
+    async with sync_lock(hass, source_id):
+        return await _sync_stations(hass, source_id, target_ids, mirror)
+
+
+async def _sync_stations(hass: HomeAssistant, source_id: str, target_ids: list[str],
+                         mirror: bool = True) -> dict[str, dict]:
+    """Make each target's station list match the source's: add what's missing, update
+    stations whose stream, genre, country or logo differ, and (mirror) delete the rest.
+    Returns a report per target. Boxes that aren't loaded are reported, not fatal."""
+    src = _client(hass, source_id)
+    src_rows = await src.get_stations()
+    src_by = {r["name"].casefold(): r for r in src_rows}
+    store, memory = await _logo_memory(hass)
+    seen: dict[str, str | None] = memory.get(source_id, {})
+    now_logo = await _logo_digests(hass, src, [r["name"] for r in src_rows])
+    # first sync of this source: nothing to compare with yet, so logos count as unchanged
+    logo_changed = {n for n, d in now_logo.items() if n in seen and d and seen[n] != d}
+
+    def as_new(r: dict) -> dict:
+        return {"name": r["name"], "url": r.get("station", ""), "genre": r.get("genre", ""),
+                "country": r.get("country", ""), "bitrate": r.get("bitrate", ""),
+                "format": r.get("format", ""), "home_page": r.get("home_page", ""),
+                "logo_url": src.logo_url(r["name"], thumb=False)}
+
+    report: dict[str, dict] = {}
+    for tid in target_ids:
+        if tid == source_id:
             continue
         try:
             tgt = _client(hass, tid)
@@ -489,24 +594,97 @@ async def ws_sync(hass, connection, msg):
         except (ValueError, MoodeError) as err:
             report[tid] = {"error": str(err)}
             continue
-        existing = {r["name"].casefold() for r in rows}
-        todo = [{"name": r["name"], "url": r.get("station", ""), "genre": r.get("genre", ""),
-                 "country": r.get("country", ""), "bitrate": r.get("bitrate", ""),
-                 "format": r.get("format", ""), "home_page": r.get("home_page", ""),
-                 "logo_url": src.logo_url(r["name"], thumb=False)}
-                for r in src_rows if r["name"].casefold() not in existing]
-        added, failed = await _add_many(hass, tgt, todo, existing)
+        by = {r["name"].casefold(): r for r in rows}
+        missing = [as_new(r) for k, r in src_by.items() if k not in by]
+        changed = []
+        for k, r in src_by.items():
+            t = by.get(k)
+            if t is None:
+                continue
+            if _station_key(t) != _station_key(r) or r["name"] in logo_changed:
+                changed.append((t["name"], as_new(r)))
+        failed: list[dict] = []
+        existing = set(by)
+        for old_name, new in changed:          # replace: delete, then add the source's version
+            try:
+                await tgt.delete_station(old_name)
+                existing.discard(old_name.casefold())
+            except MoodeError as err:
+                failed.append({"name": old_name, "error": str(err)})
         removed = []
-        if msg["mirror"]:
-            for r in rows:
-                if r["name"].casefold() not in src_names:
+        if mirror:  # remove extras first: a renamed station keeps its URL, and moOde
+            for k, r in by.items():  # won't accept the new name while the old one has it
+                if k not in src_by:
                     try:
                         await tgt.delete_station(r["name"])
                         removed.append(r["name"])
+                        existing.discard(k)
                     except MoodeError as err:
                         failed.append({"name": r["name"], "error": str(err)})
+        added, add_failed = await _add_many(hass, tgt, missing + [n for _, n in changed], existing)
+        failed += add_failed
+        if mirror:
             await tgt.refresh_radio_library()
-        report[tid] = {"added": len(added), "removed": len(removed), "failed": failed}
+        done = {a.casefold() for a in added}
+        report[tid] = {"added": sum(1 for m in missing if m["name"].casefold() in done),
+                       "updated": sum(1 for _, n in changed if n["name"].casefold() in done),
+                       "removed": len(removed), "failed": failed}
+    if not any(r.get("error") for r in report.values()):
+        memory[source_id] = now_logo  # every target saw these logos
+        store.async_delay_save(lambda: memory, 5)
+    return report
+
+
+def other_boxes(hass: HomeAssistant, source_id: str) -> list[str]:
+    return [e.entry_id for e in hass.config_entries.async_entries(DOMAIN)
+            if e.entry_id != source_id and e.state is ConfigEntryState.LOADED]
+
+
+_SYNC_DELAY = 60  # seconds after the last edit, so several edits go out together
+
+
+async def run_auto_sync(hass: HomeAssistant, source_id: str, why: str) -> None:
+    try:
+        report = await sync_stations(hass, source_id, other_boxes(hass, source_id), mirror=True)
+    except (ValueError, MoodeError) as err:
+        _LOGGER.warning("Station sync (%s) from %s failed: %s", why, source_id, err)
+        return
+    names = {e.entry_id: e.title for e in hass.config_entries.async_entries(DOMAIN)}
+    for tid, r in report.items():
+        if r.get("error") or r.get("failed"):
+            _LOGGER.warning("Station sync (%s) to %s: %s", why, names.get(tid, tid), r)
+        else:
+            _LOGGER.info("Station sync (%s) to %s: +%s ~%s -%s", why, names.get(tid, tid),
+                         r["added"], r["updated"], r["removed"])
+
+
+@callback
+def note_stations_changed(hass: HomeAssistant, entry_id: str) -> None:
+    """A box's stations were edited here: if it's set to keep the others in sync,
+    sync a minute later (restarting the wait on every new edit)."""
+    e = hass.config_entries.async_get_entry(entry_id)
+    if not e or not e.options.get(CONF_AUTO_SYNC):
+        return
+    timers = hass.data.setdefault(DOMAIN + "_sync_timers", {})
+    if (h := timers.get(entry_id)) is not None:
+        h.cancel()
+    timers[entry_id] = hass.loop.call_later(
+        _SYNC_DELAY, lambda: hass.async_create_task(run_auto_sync(hass, entry_id, "after edit"))
+    )
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "moode/stations/sync", vol.Required("source"): str,
+     vol.Required("targets"): [str], vol.Optional("mirror", default=False): bool}
+)
+@websocket_api.async_response
+async def ws_sync(hass, connection, msg):
+    """Copy the source box's stations (with logos) to other boxes, updating changed ones.
+    mirror=True also deletes stations the source doesn't have."""
+    try:
+        report = await sync_stations(hass, msg["source"], msg["targets"], msg["mirror"])
+    except (ValueError, MoodeError) as err:
+        return _err(connection, msg["id"], err)
     connection.send_result(msg["id"], report)
 
 
@@ -569,6 +747,8 @@ async def ws_restore(hass, connection, msg):
                 except MoodeError as err:
                     failed.append({"name": r["name"], "error": str(err)})
         await client.refresh_radio_library()
+    if added or removed:
+        note_stations_changed(hass, msg["entry_id"])
     connection.send_result(msg["id"], {"added": added, "removed": removed, "failed": failed})
 
 
@@ -643,4 +823,5 @@ async def ws_update(hass, connection, msg):
                 hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_FAVOURITES: favs})
     except MoodeError as err:
         return _err(connection, msg["id"], err)
+    note_stations_changed(hass, msg["entry_id"])
     connection.send_result(msg["id"], {"name": new_name, "logo_ok": logo_ok})

@@ -32,6 +32,7 @@ from .const import (
     CONF_ANN_MAX,
     CONF_ANN_RESUME,
     CONF_ARTIST_IMAGES,
+    CONF_AUTO_SYNC,
     CONF_FAV_WAKE_ZONE,
     CONF_VOLUME_MODE,
     CONF_FAVOURITES,
@@ -184,7 +185,7 @@ class MoodeOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["zone", "favourites", "amplifier", "volume", "sleep", "announce", "library"],
+            menu_options=["zone", "favourites", "amplifier", "volume", "sleep", "announce", "library", "stations"],
             description_placeholders={"box": self.config_entry.title},
         )
 
@@ -291,6 +292,19 @@ class MoodeOptionsFlow(OptionsFlow):
             step_id="library",
             data_schema=vol.Schema({
                 vol.Required(CONF_ARTIST_IMAGES, default=opt(entry, CONF_ARTIST_IMAGES)): bool,
+            }),
+        )
+
+    # ---- station sync --------------------------------------------------------
+
+    async def async_step_stations(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        entry = self.config_entry
+        if user_input is not None:
+            return self._save(**user_input)
+        return self.async_show_form(
+            step_id="stations",
+            data_schema=vol.Schema({
+                vol.Required(CONF_AUTO_SYNC, default=opt(entry, CONF_AUTO_SYNC)): bool,
             }),
         )
 

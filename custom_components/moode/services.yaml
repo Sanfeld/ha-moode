@@ -1,0 +1,20 @@
+sync_stations:
+  fields:
+    source:
+      required: true
+      selector:
+        entity:
+          filter:
+            - integration: moode
+              domain: media_player
+    targets:
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: moode
+              domain: media_player
+    mirror:
+      default: true
+      selector:
+        boolean: {}

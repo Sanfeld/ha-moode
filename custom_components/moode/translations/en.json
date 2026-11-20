@@ -80,7 +80,8 @@
           "announce": "Announcements",
           "volume": "Volume control",
           "amplifier": "Amplifier",
-          "library": "Music library"
+          "library": "Music library",
+          "stations": "Station sync"
         }
       },
       "zone": {
@@ -138,6 +139,13 @@
         "data": {
           "artist_images": "Artist photos from Deezer"
         }
+      },
+      "stations": {
+        "title": "Station sync",
+        "description": "Make the other moOde boxes' radio stations a copy of this box's: missing stations are added, changed ones updated (stream, genre, country, logo) and extra ones removed. It runs a minute after you change this box's stations in the Stations tab, and every night at 04:15 (that also catches changes made in moOde's own web page). Turn this on for one box only, usually the zone's sender.",
+        "data": {
+          "auto_sync_stations": "Keep the other boxes' stations the same as this box"
+        }
       }
     },
     "error": {
@@ -177,6 +185,26 @@
     "receiver_disabled": {
       "title": "{box} isn't a receiver in moOde",
       "description": "**{box}** is part of the **{zone}** zone in Home Assistant, but its multiroom receiver is disabled in moOde, so it can't play along with the zone. Enable it in that box's moOde web page (Configure → Multiroom → Receiver), or remove it from the zone under moOde Audio → {zone} → Configure → Multiroom zone."
+    }
+  },
+  "services": {
+    "sync_stations": {
+      "name": "Sync stations",
+      "description": "Copy one box's radio stations (with logos) to other boxes.",
+      "fields": {
+        "source": {
+          "name": "From",
+          "description": "The moOde player whose stations are copied."
+        },
+        "targets": {
+          "name": "To",
+          "description": "The players to update. Leave empty for all the other boxes."
+        },
+        "mirror": {
+          "name": "Exact copy",
+          "description": "Also delete stations the source doesn't have."
+        }
+      }
     }
   }
 }

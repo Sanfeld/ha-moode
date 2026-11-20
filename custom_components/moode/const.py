@@ -23,6 +23,7 @@ CONF_ANN_ALL_ROOMS = "announce_all_rooms"
 CONF_ANN_LEAD_IN = "announce_lead_in"
 CONF_ANN_MAX = "announce_max_seconds"
 CONF_ARTIST_IMAGES = "artist_images"  # look up artist photos online (Deezer)
+CONF_AUTO_SYNC = "auto_sync_stations"  # keep the other boxes' stations the same as this box
 
 DEFAULTS = {
     CONF_VOLUME_MODE: "auto",
@@ -35,6 +36,7 @@ DEFAULTS = {
     CONF_ANN_LEAD_IN: 1.0,
     CONF_ANN_MAX: 60,
     CONF_ARTIST_IMAGES: True,
+    CONF_AUTO_SYNC: False,
 }
 
 

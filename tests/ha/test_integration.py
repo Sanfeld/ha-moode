@@ -169,3 +169,103 @@ async def test_controls_follow_the_box_role(hass: HomeAssistant, mock_moode) -> 
     await hass.async_block_till_done()
     r = keys(room)
     assert {"all_stations", "recent"} <= r and not {"room_mode", "room_station", "receiver"} & r
+
+
+async def test_station_sync_makes_targets_a_copy(hass: HomeAssistant, mock_moode) -> None:
+    """moode.sync_stations: missing added, changed replaced, extras removed (mirror)."""
+    from datetime import timedelta
+    from unittest.mock import AsyncMock, patch
+
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    from custom_components.moode import api
+    from custom_components.moode.stations import note_stations_changed
+
+    boxes = {
+        "192.0.2.10": [{"name": "A", "station": "http://a"}, {"name": "B", "station": "http://b2", "genre": "Rock"},
+                       {"name": "C", "station": "http://c"}],
+        "192.0.2.11": [{"name": "A", "station": "http://a"}, {"name": "B", "station": "http://b1"},
+                       {"name": "D", "station": "http://d"}],
+    }
+    added, deleted = [], []
+
+    async def get_stations(self, *args, **kwargs):
+        return [dict(r) for r in boxes[self.host]]
+
+    async def add_station(self, st):
+        if any(r["station"] == st["url"] for r in boxes[self.host]):  # as moOde does
+            raise api.MoodeError("A station with same URL already exists in the database")
+        added.append((self.host, st["name"]))
+        boxes[self.host].append({"name": st["name"], "station": st["url"], "genre": st.get("genre", "")})
+        return "OK"
+
+    async def delete_station(self, name):
+        deleted.append((self.host, name))
+        boxes[self.host] = [r for r in boxes[self.host] if r["name"] != name]
+
+    # moOde re-encodes uploaded logos: the target's copies never match the source's bytes
+    source_logo = {"A": "data:image/jpeg;base64,AA"}
+
+    async def fetch_logo(hass, url, *args, **kwargs):
+        if "192.0.2.11" in url:
+            return "data:image/jpeg;base64,REENCODED"
+        name = url.rsplit("/", 1)[-1].split(".")[0]
+        return source_logo.get(name, "data:image/jpeg;base64,SAME")
+
+    src = MockConfigEntry(domain=DOMAIN, title="Streamer", unique_id="moodestreamer",
+                          data={CONF_HOST: "192.0.2.10"})
+    tgt = MockConfigEntry(domain=DOMAIN, title="Kitchen", unique_id="kitchenpi",
+                          data={CONF_HOST: "192.0.2.11"})
+    src.add_to_hass(hass)
+    tgt.add_to_hass(hass)
+    with (
+        patch.object(api.MoodeClient, "get_stations", get_stations),
+        patch.object(api.MoodeClient, "add_station", add_station),
+        patch.object(api.MoodeClient, "delete_station", delete_station),
+        patch.object(api.MoodeClient, "refresh_radio_library", AsyncMock()),
+        patch("custom_components.moode.stations._fetch_data_url", AsyncMock(side_effect=fetch_logo)),
+        patch.object(api.MoodeClient, "stage_station_logo", AsyncMock(return_value=False)),
+    ):
+        assert await hass.config_entries.async_setup(src.entry_id)
+        await hass.async_block_till_done()
+        player = next(e.entity_id for e in er.async_entries_for_config_entry(er.async_get(hass), src.entry_id)
+                      if e.domain == "media_player" and e.unique_id == "moodestreamer_player")
+
+        res = await hass.services.async_call(DOMAIN, "sync_stations", {"source": player},
+                                             blocking=True, return_response=True)
+        assert res["boxes"]["Kitchen"] == {"added": 1, "updated": 1, "removed": 1, "failed": []}
+        assert sorted(r["name"] for r in boxes["192.0.2.11"]) == ["A", "B", "C"]
+        assert next(r for r in boxes["192.0.2.11"] if r["name"] == "B")["station"] == "http://b2"
+        assert ("192.0.2.10", "B") not in deleted          # the source is never touched
+
+        # nothing changed: a second sync touches nothing, even though logo bytes differ
+        res = await hass.services.async_call(DOMAIN, "sync_stations", {"source": player},
+                                             blocking=True, return_response=True)
+        assert res["boxes"]["Kitchen"] == {"added": 0, "updated": 0, "removed": 0, "failed": []}
+        # a logo changed on the source: just that station is sent again
+        source_logo["A"] = "data:image/jpeg;base64,NEWLOGO"
+        res = await hass.services.async_call(DOMAIN, "sync_stations", {"source": player},
+                                             blocking=True, return_response=True)
+        assert res["boxes"]["Kitchen"]["updated"] == 1
+
+        # a station renamed on the source (same URL): the old name goes before the new one comes
+        boxes["192.0.2.10"] = [{**r, "name": "C renamed"} if r["name"] == "C" else r
+                               for r in boxes["192.0.2.10"]]
+        res = await hass.services.async_call(DOMAIN, "sync_stations", {"source": player},
+                                             blocking=True, return_response=True)
+        assert res["boxes"]["Kitchen"] == {"added": 1, "updated": 0, "removed": 1, "failed": []}
+        assert sorted(r["name"] for r in boxes["192.0.2.11"]) == ["A", "B", "C renamed"]
+
+        # automatic: an edit on the source syncs the others a minute later
+        boxes["192.0.2.10"].append({"name": "E", "station": "http://e"})
+        hass.config_entries.async_update_entry(src, options={**src.options, "auto_sync_stations": True})
+        await hass.async_block_till_done()
+        note_stations_changed(hass, src.entry_id)
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+        await hass.async_block_till_done()
+        assert ("192.0.2.11", "E") not in added             # not yet
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=90))
+        await hass.async_block_till_done()
+        assert ("192.0.2.11", "E") in added
