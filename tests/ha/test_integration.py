@@ -50,12 +50,13 @@ async def test_setup_creates_player(hass: HomeAssistant, mock_moode) -> None:
 
 
 async def test_stopped_box_shows_no_old_song(hass: HomeAssistant, mock_moode) -> None:
-    """A stopped box keeps its station but not the last song MPD played."""
+    """A stopped box shows nothing of what MPD last played: no song, station or cover."""
     mock_moode.fetch_state.return_value = make_state(state="stop")
     await _setup(hass)
-    attrs = hass.states.get("media_player.streamer").attributes
-    assert "media_title" not in attrs
-    assert "media_artist" not in attrs
+    state = hass.states.get("media_player.streamer")
+    for attr in ("media_title", "media_artist", "media_album_name", "media_channel",
+                 "media_duration", "media_position", "entity_picture"):
+        assert attr not in state.attributes, attr
 
 
 async def test_fixed_volume_hides_volume_controls(hass: HomeAssistant, mock_moode) -> None:

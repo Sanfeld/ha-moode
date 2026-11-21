@@ -101,7 +101,8 @@ class _Playback:
 
         moOde keeps the last song its own player (MPD) played, even after the box has
         since been playing from a multiroom zone, which never goes through MPD. Showing
-        that would be a song from hours ago, so a stopped source shows no song.
+        that would be a song from hours ago, so a stopped source shows nothing: no song,
+        station, album or cover.
         """
         d = self._src()
         return d is not None and d.state == "stop" and not d.renderer
@@ -120,19 +121,21 @@ class _Playback:
 
     @property
     def media_album_name(self):
+        if self._stopped():
+            return None
         d = self._src()
-        if d.is_radio:
-            return d.station or d.album
-        return None if self._stopped() else d.album
+        return d.station or d.album if d.is_radio else d.album
 
     @property
     def media_channel(self):
+        if self._stopped():
+            return None
         d = self._src()
         return d.station if d.is_radio else None
 
     @property
     def media_image_url(self):
-        return self._src().cover_url
+        return None if self._stopped() else self._src().cover_url
 
     @property
     def media_duration(self):

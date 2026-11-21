@@ -4,7 +4,7 @@
 
 - A stopped box no longer shows an old song: moOde keeps the last song its own player
   played, even after the box has since been playing from a multiroom zone, so stopped
-  players now show only the station
+  players now show no song info at all (no title, artist, album, station or cover)
 
 ## 1.4.1 (2026-11-21)
 
