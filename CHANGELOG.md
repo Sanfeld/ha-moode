@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.1 (2026-11-21)
+
+Doorbell pause blueprint:
+
+- New "Turn the volume down" mode, as an alternative to pausing: lowers chosen players or amplifiers
+  to a set level and puts the volume back afterwards
+- The announcement now plays before the volume goes down, so it isn't drowned out
+- Adjustable time to pause or keep the volume down (5 s to 30 min) and announcement length
+- Works with phone/tablet "Last notification" sensors, for doorbells whose rings don't reach
+  Home Assistant (e.g. Yale video doorbells); a regular expression picks out ring notifications
+- Fix: the very first ring of a doorbell that had never rung before was ignored
+
 ## 1.4.0 (2026-11-20)
 
 - Station sync: a box can keep the other boxes' radio stations as an exact copy of its
