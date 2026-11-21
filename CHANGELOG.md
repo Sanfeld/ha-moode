@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.2 (unreleased)
+## 1.4.2 (2026-11-21)
 
 - A stopped box no longer shows an old song: moOde keeps the last song its own player
   played, even after the box has since been playing from a multiroom zone, so stopped
