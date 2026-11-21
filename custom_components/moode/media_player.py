@@ -96,41 +96,56 @@ class _Playback:
             self._last_elapsed = d.elapsed
             self._position_updated_at = dt_util.utcnow()
 
+    def _stopped(self) -> bool:
+        """Nothing is playing (or paused) from this source.
+
+        moOde keeps the last song its own player (MPD) played, even after the box has
+        since been playing from a multiroom zone, which never goes through MPD. Showing
+        that would be a song from hours ago, so a stopped source shows nothing: no song,
+        station, album or cover.
+        """
+        d = self._src()
+        return d is not None and d.state == "stop" and not d.renderer
+
     @property
     def media_content_type(self):
         return MediaType.MUSIC
 
     @property
     def media_title(self):
-        return self._src().title
+        return None if self._stopped() else self._src().title
 
     @property
     def media_artist(self):
-        return self._src().artist
+        return None if self._stopped() else self._src().artist
 
     @property
     def media_album_name(self):
+        if self._stopped():
+            return None
         d = self._src()
         return d.station or d.album if d.is_radio else d.album
 
     @property
     def media_channel(self):
+        if self._stopped():
+            return None
         d = self._src()
         return d.station if d.is_radio else None
 
     @property
     def media_image_url(self):
-        return self._src().cover_url
+        return None if self._stopped() else self._src().cover_url
 
     @property
     def media_duration(self):
         d = self._src()
-        return None if d.is_radio or not d.duration else int(d.duration)
+        return None if d.is_radio or not d.duration or self._stopped() else int(d.duration)
 
     @property
     def media_position(self):
         d = self._src()
-        return None if d.is_radio or d.elapsed is None else int(d.elapsed)
+        return None if d.is_radio or d.elapsed is None or self._stopped() else int(d.elapsed)
 
     @property
     def media_position_updated_at(self):
