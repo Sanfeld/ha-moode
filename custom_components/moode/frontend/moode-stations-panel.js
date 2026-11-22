@@ -85,7 +85,13 @@ class MoodeStationsPanel extends HTMLElement {
   async _init() {
     this.render();
     try {
-      this.s.boxes = await this.ws("moode/boxes");
+      // Changing a favourite reloads that box in HA, and the dashboard is rebuilt while
+      // it's away: wait for it to come back instead of jumping to the next box.
+      for (let i = 0; ; i++) {
+        this.s.boxes = await this.ws("moode/boxes");
+        if (!this.s.entry || this.s.boxes.some((b) => b.entry_id === this.s.entry) || i >= 10) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
       if (!this.s.boxes.some((b) => b.entry_id === this.s.entry)) this.s.entry = this.s.boxes[0]?.entry_id || null;
       await this.load();
     } catch (e) { this.toast(`Couldn't load boxes: ${e.message || e}`); }
