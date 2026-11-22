@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.3 (unreleased)
+## 1.4.3 (2026-11-22)
 
 - Stations tab: changing a favourite no longer jumps to the next box. The box reloads in
   Home Assistant when its favourites change, and the tab now waits for it to come back
