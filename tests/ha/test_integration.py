@@ -334,7 +334,6 @@ async def test_provision_receiver_joins_the_zone(hass: HomeAssistant, mock_moode
         patch("custom_components.moode.provision.JOB_PAUSE", 0),
     ):
         assert await hass.config_entries.async_setup(sender.entry_id)
-        assert await hass.config_entries.async_setup(new.entry_id)
         await hass.async_block_till_done()
         reg = er.async_get(hass)
 
