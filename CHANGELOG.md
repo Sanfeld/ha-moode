@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0 (unreleased)
+
+- Multiroom setup from Home Assistant: when a new box is added, choose Stand-alone, Receiver
+  (a room in an existing zone) or Sender, and Home Assistant sets it up in moOde's
+  Configure → Multiroom: a receiver gets the zone's multicast address and the buffer/output
+  settings of a room that already works, is switched on and added to the zone; a sender gets
+  Loopback and the multiroom sender switched on. Audio device, DSP and volume type are
+  not touched
+- New action `moode.provision_multiroom` does the same for a box that's already added (for
+  example after reinstalling moOde), with a "only show what would change" option
+
 ## 1.4.3 (2026-11-22)
 
 - Stations tab: changing a favourite no longer jumps to the next box. The box reloads in

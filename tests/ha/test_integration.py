@@ -279,3 +279,111 @@ async def test_station_sync_makes_targets_a_copy(hass: HomeAssistant, mock_moode
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=90))
         await hass.async_block_till_done()
         assert ("192.0.2.11", "E") in added
+
+
+def _fake_trx(boxes: dict):
+    """moOde's Multiroom page per host: `boxes[host]` holds the current values."""
+    from custom_components.moode.api import TrxForm
+
+    choices = {"multiroom_rx": ["Disabled", "On", "Off"], "multiroom_rx_bfr": ["16", "32", "64"],
+               "multiroom_rx_alsa_output_mode": ["plughw", "hw"]}
+    posted = []
+
+    def form(host):
+        return TrxForm(values=dict(boxes[host]), choices=choices, csrf="t")
+
+    async def trx_read(self):
+        return form(self.host), {}
+
+    async def trx_set(self, button, values=None):
+        posted.append((self.host, button, dict(values or {})))
+        boxes[self.host].update(values or {})
+        return form(self.host)
+
+    return trx_read, trx_set, posted
+
+
+async def test_provision_receiver_joins_the_zone(hass: HomeAssistant, mock_moode) -> None:
+    """moode.provision_multiroom: dry run lists the changes; the real run makes them,
+    copies a working room's settings and adds the box to the zone."""
+    from unittest.mock import patch
+
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.moode import api
+
+    boxes = {
+        "192.0.2.10": {"multiroom_tx": "On", "alsa_loopback": "On", "multiroom_tx_host": "239.0.0.1",
+                       "multiroom_rx": "Disabled"},
+        "192.0.2.11": {"multiroom_rx": "On", "multiroom_rx_host": "239.0.0.1", "multiroom_rx_bfr": "32",
+                       "multiroom_rx_alsa_output_mode": "iec958"},
+        "192.0.2.12": {"multiroom_rx": "Disabled", "multiroom_rx_host": "239.0.0.9", "multiroom_rx_bfr": "64",
+                       "multiroom_rx_alsa_output_mode": "plughw"},
+    }
+    trx_read, trx_set, posted = _fake_trx(boxes)
+    kitchen = MockConfigEntry(domain=DOMAIN, title="Kitchen", unique_id="kitchenpi", data={CONF_HOST: "192.0.2.11"})
+    new = MockConfigEntry(domain=DOMAIN, title="Office", unique_id="officepi", data={CONF_HOST: "192.0.2.12"})
+    kitchen.add_to_hass(hass)
+    new.add_to_hass(hass)
+    sender = MockConfigEntry(domain=DOMAIN, title="Streamer", unique_id="moodestreamer",
+                             data={CONF_HOST: "192.0.2.10"}, options={"receivers": [kitchen.entry_id]})
+    sender.add_to_hass(hass)
+    with (
+        patch.object(api.MoodeClient, "trx_read", trx_read),
+        patch.object(api.MoodeClient, "trx_set", trx_set),
+        patch("custom_components.moode.provision.JOB_PAUSE", 0),
+    ):
+        assert await hass.config_entries.async_setup(sender.entry_id)
+        assert await hass.config_entries.async_setup(new.entry_id)
+        await hass.async_block_till_done()
+        reg = er.async_get(hass)
+
+        def player(entry):
+            return next(e.entity_id for e in er.async_entries_for_config_entry(reg, entry.entry_id)
+                        if e.domain == "media_player" and e.unique_id.endswith("_player"))
+
+        data = {"box": player(new), "role": "receiver", "sender": player(sender)}
+        res = await hass.services.async_call(DOMAIN, "provision_multiroom", {**data, "dry_run": True},
+                                             blocking=True, return_response=True)
+        assert res["changes"] == ["Multicast address: 239.0.0.9 → 239.0.0.1", "Receiver buffer: 64 → 32",
+                                  "Receiver: Disabled → On"]
+        assert any("ALSA output mode" in n for n in res["notes"])   # iec958 not offered here
+        assert not posted                                            # dry run changes nothing
+
+        res = await hass.services.async_call(DOMAIN, "provision_multiroom", data,
+                                             blocking=True, return_response=True)
+        await hass.async_block_till_done()
+        assert boxes["192.0.2.12"]["multiroom_rx"] == "On"
+        assert boxes["192.0.2.12"]["multiroom_rx_host"] == "239.0.0.1"
+        assert ("192.0.2.10", "multiroom_tx_discover", {}) in posted  # sender looks for it
+        assert hass.config_entries.async_get_entry(sender.entry_id).options["receivers"] == [
+            kitchen.entry_id, new.entry_id]
+
+        # again: nothing left to do
+        res = await hass.services.async_call(DOMAIN, "provision_multiroom", data,
+                                             blocking=True, return_response=True)
+        assert res["changes"] == ["Nothing to change: already set up"]
+
+
+async def test_new_box_flow_offers_multiroom_role(hass: HomeAssistant, mock_moode) -> None:
+    """Adding a box while a zone exists asks for its role; Sender switches loopback + sender on."""
+    from unittest.mock import patch
+
+    from custom_components.moode import api
+
+    boxes = {"192.0.2.20": {"multiroom_tx": "Off", "alsa_loopback": "Off", "multiroom_rx": "Disabled"}}
+    trx_read, trx_set, posted = _fake_trx(boxes)
+    await _setup(hass)
+    mock_moode.validate.return_value = "newpi"
+    with (
+        patch.object(api.MoodeClient, "trx_read", trx_read),
+        patch.object(api.MoodeClient, "trx_set", trx_set),
+        patch("custom_components.moode.provision.JOB_PAUSE", 0),
+    ):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_HOST: "192.0.2.20"})
+        assert result["type"] is FlowResultType.FORM and result["step_id"] == "multiroom"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"role": "sender"})
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert [b for _, b, _ in posted] == ["update_alsa_loopback", "update_multiroom_tx"]
+    assert boxes["192.0.2.20"]["multiroom_tx"] == "On"

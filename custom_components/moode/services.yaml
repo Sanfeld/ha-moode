@@ -18,3 +18,37 @@ sync_stations:
       default: true
       selector:
         boolean: {}
+provision_multiroom:
+  fields:
+    box:
+      required: true
+      selector:
+        entity:
+          filter:
+            - integration: moode
+              domain: media_player
+    role:
+      required: true
+      default: receiver
+      selector:
+        select:
+          translation_key: provision_role
+          options:
+            - receiver
+            - sender
+    sender:
+      selector:
+        entity:
+          filter:
+            - integration: moode
+              domain: media_player
+    copy_from:
+      selector:
+        entity:
+          filter:
+            - integration: moode
+              domain: media_player
+    dry_run:
+      default: false
+      selector:
+        boolean: {}
