@@ -602,8 +602,13 @@ class MoodeClient:
             raise MoodeError(f"Multiroom page: {err}") from err
 
     async def trx_read(self) -> tuple[TrxForm, dict[str, str]]:
-        """Open the Multiroom page: its current settings plus the session to change them."""
-        body, cookie = await self._trx_request("GET")
+        """Open the Multiroom page: its current settings plus the session to change them.
+        moOde fills the page from its own session, so send moOde's session cookie (from its
+        start page, as a browser has it); without it the page comes back blank."""
+        cookie = await self._moode_session_cookie()
+        if not cookie:
+            raise MoodeError("moOde didn't give Home Assistant a session")
+        body, cookie = await self._trx_request("GET", cookie=cookie)
         form = parse_trx_form(body)
         if "multiroom_rx" not in form.values:  # (the security token only exists from moOde 10.4)
             raise MoodeError("moOde's Multiroom page looks different from what this version "
