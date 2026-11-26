@@ -1,10 +1,11 @@
 # Changelog
 
-## 1.5.1 (2026-11-27)
+## 1.5.1 (unreleased)
 
 - The actions `moode.sync_stations` and `moode.provision_multiroom` change the boxes'
   configuration, so (like the Stations panel) only Home Assistant administrators can call
   them. Automations and scripts keep working. Suggested in the Marketplace review
+- README: moOde Audio is in the Marketplace's default catalog now
 
 ## 1.5.0 (2026-11-26)
 
