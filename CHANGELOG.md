@@ -13,6 +13,18 @@
 - Each box's device page shows which Raspberry Pi it is (e.g. "Pi-4B 1.4 4GB"), read once
   from moOde's System info
 
+## 1.4.4 (unreleased)
+
+Security fixes from the Home Assistant Marketplace review:
+
+- Station pictures of the favourite buttons are no longer open to anyone who can reach
+  Home Assistant: they need a login, or the button's own random access token, which is
+  part of the picture URL (as Home Assistant's own image entities do)
+- The Stations tab's commands (add, edit, delete, check, sync, restore, favourites...)
+  are for Home Assistant administrators only. Other users see a short note there
+- Discovery only reacts to moOde's own web service ("moOde audio player: ..."), not to
+  every web server and MPD on the network
+
 ## 1.4.3 (2026-11-22)
 
 - Stations tab: changing a favourite no longer jumps to the next box. The box reloads in

@@ -387,3 +387,39 @@ async def test_new_box_flow_offers_multiroom_role(hass: HomeAssistant, mock_mood
         assert result["type"] is FlowResultType.CREATE_ENTRY
     assert [b for _, b, _ in posted] == ["update_alsa_loopback", "update_multiroom_tx"]
     assert boxes["192.0.2.20"]["multiroom_tx"] == "On"
+async def test_station_picture_needs_login_or_the_buttons_token(
+    hass: HomeAssistant, mock_moode, hass_client_no_auth, hass_client, aioclient_mock
+) -> None:
+    """Favourite button pictures: served to a logged-in user, or with that button's own
+    random token in the URL; never to anybody else."""
+    from homeassistant.helpers import entity_registry as er
+
+    entry = await _setup(hass, {"favourites": ["file:RADIO/P4 Kalmar.pls"]})
+    button = next(e.entity_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+                  if e.domain == "button" and "_fav_" in e.unique_id)
+    picture = hass.states.get(button).attributes["entity_picture"]
+    path, token = picture.split("?token=")
+    assert len(token) >= 24
+    aioclient_mock.get(entry.runtime_data.client.logo_url("P4 Kalmar"), content=b"\xff\xd8logo",
+                       headers={"Content-Type": "image/jpeg"})
+
+    anon = await hass_client_no_auth()
+    assert (await anon.get(path)).status == 401                      # no token
+    assert (await anon.get(f"{path}?token=wrong")).status == 401     # wrong token
+    assert (await anon.get(f"/api/moode/station_picture/{entry.entry_id}/Other?token={token}")).status == 401
+    resp = await anon.get(picture)                                    # the button's own URL
+    assert resp.status == 200 and await resp.read() == b"\xff\xd8logo"
+    assert (await (await hass_client()).get(path)).status == 200     # logged in, no token
+
+
+async def test_station_commands_are_admin_only(
+    hass: HomeAssistant, mock_moode, hass_ws_client, hass_read_only_access_token
+) -> None:
+    entry = await _setup(hass)
+    ws = await hass_ws_client(hass, hass_read_only_access_token)     # a non-admin user
+    for msg in ({"type": "moode/stations/delete", "entry_id": entry.entry_id, "names": ["X"]},
+                {"type": "moode/stations/check", "urls": ["http://192.168.1.1/"]},
+                {"type": "moode/boxes"}):
+        await ws.send_json_auto_id(msg)
+        res = await ws.receive_json()
+        assert not res["success"] and res["error"]["code"] == "unauthorized", msg

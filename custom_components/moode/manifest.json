@@ -20,13 +20,11 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Sanfeld/ha-moode/issues",
   "requirements": [],
-  "version": "1.5.0b4",
+  "version": "1.5.0b5",
   "zeroconf": [
     {
-      "type": "_mpd._tcp.local."
-    },
-    {
-      "type": "_http._tcp.local."
+      "type": "_http._tcp.local.",
+      "name": "moode audio player*"
     },
     {
       "type": "_raop._tcp.local.",

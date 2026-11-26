@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from urllib.parse import quote
 
 from homeassistant.components.button import ButtonEntity
@@ -15,6 +16,7 @@ from .browse import async_play
 from .const import CONF_FAV_WAKE_ZONE, CONF_FAVOURITES, opt
 from .entity import MoodeEntity
 from .select import station_name
+from .stations import picture_tokens
 from .zones import remove_stale_entities, wake_zone_if_silent
 
 
@@ -38,9 +40,23 @@ class FavouriteButton(MoodeEntity, ButtonEntity):
         slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
         self._attr_translation_key = "play_favourite"
         self._attr_translation_placeholders = {"station": name}
-        # the station's moOde logo, served through HA (works on https / remote access too)
-        self._attr_entity_picture = f"/api/moode/station_picture/{entry.entry_id}/{quote(name, safe='')}"
+        # the station's moOde logo, served through HA (works on https / remote access too),
+        # with this button's own random access token (see MoodeStationPictureView)
+        self._picture_key = (entry.entry_id, name)
+        self._picture_token = secrets.token_urlsafe(24)
+        self._attr_entity_picture = (f"/api/moode/station_picture/{entry.entry_id}/"
+                                     f"{quote(name, safe='')}?token={self._picture_token}")
         self._attr_unique_id = f"{self._box_id}_fav_{slug}"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        picture_tokens(self.hass)[self._picture_key] = self._picture_token
+
+    async def async_will_remove_from_hass(self) -> None:
+        tokens = picture_tokens(self.hass)
+        if tokens.get(self._picture_key) == self._picture_token:
+            del tokens[self._picture_key]
+        await super().async_will_remove_from_hass()
 
     async def async_press(self) -> None:
         if opt(self._entry, CONF_FAV_WAKE_ZONE):

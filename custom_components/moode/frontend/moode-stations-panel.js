@@ -83,6 +83,11 @@ class MoodeStationsPanel extends HTMLElement {
   }
 
   async _init() {
+    if (this._hass.user && !this._hass.user.is_admin) {  // station managing is admin-only
+      this.s.busy = "Managing stations needs a Home Assistant administrator account.";
+      this.render();
+      return;
+    }
     this.render();
     try {
       // Changing a favourite reloads that box in HA, and the dashboard is rebuilt while
