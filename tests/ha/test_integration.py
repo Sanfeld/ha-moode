@@ -423,3 +423,21 @@ async def test_station_commands_are_admin_only(
         await ws.send_json_auto_id(msg)
         res = await ws.receive_json()
         assert not res["success"] and res["error"]["code"] == "unauthorized", msg
+
+
+async def test_box_changing_actions_are_admin_only(hass: HomeAssistant, mock_moode, hass_read_only_user) -> None:
+    """moode.sync_stations and moode.provision_multiroom change the boxes: a non-admin
+    user can't call them (automations, with no user, still can)."""
+    import pytest
+    from homeassistant.core import Context
+    from homeassistant.exceptions import Unauthorized
+    from homeassistant.helpers import entity_registry as er
+
+    entry = await _setup(hass)
+    player = next(e.entity_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+                  if e.domain == "media_player" and e.unique_id.endswith("_player"))
+    for action, data in (("sync_stations", {"source": player}),
+                         ("provision_multiroom", {"box": player, "role": "sender", "dry_run": True})):
+        with pytest.raises(Unauthorized):
+            await hass.services.async_call(DOMAIN, action, data, blocking=True, return_response=True,
+                                           context=Context(user_id=hass_read_only_user.id))

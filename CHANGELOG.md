@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1 (2026-11-27)
+
+- The actions `moode.sync_stations` and `moode.provision_multiroom` change the boxes'
+  configuration, so (like the Stations panel) only Home Assistant administrators can call
+  them. Automations and scripts keep working. Suggested in the Marketplace review
+
 ## 1.5.0 (2026-11-26)
 
 - Multiroom setup from Home Assistant: when a new box is added, choose Stand-alone, Receiver

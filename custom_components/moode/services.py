@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, Supp
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.service import async_register_admin_service
 
 from .api import MoodeError
 from .const import DOMAIN
@@ -50,8 +51,10 @@ def async_setup_services(hass: HomeAssistant) -> None:
         titles = {e.entry_id: e.title for e in hass.config_entries.async_entries(DOMAIN)}
         return {"boxes": {titles.get(k, k): v for k, v in report.items()}}
 
-    hass.services.async_register(DOMAIN, "sync_stations", _sync, schema=SYNC_SCHEMA,
-                                 supports_response=SupportsResponse.OPTIONAL)
+    # Both change the boxes' configuration, so (like the Stations panel) admin only.
+    # Automations and scripts are not affected: calls without a user are always allowed.
+    async_register_admin_service(hass, DOMAIN, "sync_stations", _sync, SYNC_SCHEMA,
+                                 SupportsResponse.OPTIONAL)
 
     def _client(entry_id: str):
         entry = hass.config_entries.async_get_entry(entry_id)
@@ -86,5 +89,5 @@ def async_setup_services(hass: HomeAssistant) -> None:
         return {"box": box.title, "role": call.data["role"], "dry_run": dry,
                 "changes": done or ["Nothing to change: already set up"], "notes": plan.notes}
 
-    hass.services.async_register(DOMAIN, "provision_multiroom", _provision, schema=PROVISION_SCHEMA,
-                                 supports_response=SupportsResponse.OPTIONAL)
+    async_register_admin_service(hass, DOMAIN, "provision_multiroom", _provision, PROVISION_SCHEMA,
+                                 SupportsResponse.OPTIONAL)
