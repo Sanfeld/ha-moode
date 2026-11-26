@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.4 (unreleased)
+## 1.4.4 (2026-11-26)
 
 Security fixes from the Home Assistant Marketplace review:
 
