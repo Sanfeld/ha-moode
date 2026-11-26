@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import logging
 from datetime import timedelta
 from typing import Any
@@ -17,7 +18,7 @@ import voluptuous as vol
 from aiohttp import ClientConnectorError, ClientError, ClientTimeout, InvalidURL, web
 
 from homeassistant.components import websocket_api
-from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.http import KEY_AUTHENTICATED, HomeAssistantView
 from homeassistant.components.http.auth import async_sign_path
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
@@ -218,14 +219,30 @@ class MoodeLogoView(HomeAssistantView):
 # ------------------------------------------------------------------ websocket commands
 
 
+PICTURE_TOKENS = f"{DOMAIN}_picture_tokens"
+
+
+def picture_tokens(hass: HomeAssistant) -> dict[tuple[str, str], str]:
+    """(entry_id, station name) -> the access token of that favourite button's picture."""
+    return hass.data.setdefault(PICTURE_TOKENS, {})
+
+
 class MoodeStationPictureView(MoodeLogoView):
-    """Station logos for entity pictures (dashboard buttons). Picture <img> requests can't
-    carry HA auth, so this route is open, but it only ever serves radio-logo thumbnails
-    from a configured moOde box (public station artwork), nothing else."""
+    """Station logos for entity pictures (the favourite buttons). A picture <img> can't send
+    HA's login, so, like Home Assistant's own image entities, the URL carries a random
+    per-button access token. Without a login or that token, nothing is served."""
 
     url = "/api/moode/station_picture/{entry_id}/{name}"
     name = "api:moode:station_picture"
     requires_auth = False
+
+    async def get(self, request: web.Request, entry_id: str, name: str) -> web.Response:
+        if not request.get(KEY_AUTHENTICATED):
+            expected = picture_tokens(request.app["hass"]).get((entry_id, name))
+            token = request.query.get("token", "")
+            if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
+                return web.Response(status=401)
+        return await super().get(request, entry_id, name)
 
 
 @callback
@@ -258,6 +275,7 @@ def _err(connection, msg_id, err: Exception) -> None:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "moode/boxes"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_boxes(hass, connection, msg):
     boxes = []
@@ -271,6 +289,7 @@ async def ws_boxes(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "moode/stations", vol.Required("entry_id"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_list(hass, connection, msg):
     try:
@@ -304,6 +323,7 @@ async def _reference_builtins(hass: HomeAssistant, entry_id: str) -> set[str] | 
 @websocket_api.websocket_command(
     {vol.Required("type"): "moode/stations/check", vol.Required("urls"): [str]}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_check(hass, connection, msg):
     """Pass 1: quick parallel test. Pass 2: anything not 'ok' is retried one at a time
@@ -326,6 +346,7 @@ async def ws_check(hass, connection, msg):
     {vol.Required("type"): "moode/stations/delete", vol.Required("entry_id"): str,
      vol.Required("names"): [str]}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_delete(hass, connection, msg):
     try:
@@ -411,6 +432,7 @@ async def _add_many(hass, client, stations: list[dict], existing: set[str]) -> t
     {vol.Required("type"): "moode/stations/add", vol.Required("entry_id"): str,
      vol.Required("stations"): [STATION_SCHEMA]}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_add(hass, connection, msg):
     try:
@@ -429,6 +451,7 @@ async def ws_add(hass, connection, msg):
      vol.Optional("country", default=""): str, vol.Optional("tag", default=""): str,
      vol.Optional("limit", default=60): vol.All(int, vol.Range(min=1, max=200))}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_search(hass, connection, msg):
     params = {"hidebroken": "true", "order": "clickcount", "reverse": "true", "limit": str(msg["limit"])}
@@ -477,6 +500,7 @@ async def ws_search(hass, connection, msg):
     {vol.Required("type"): "moode/stations/favourite", vol.Required("entry_id"): str,
      vol.Required("name"): str, vol.Required("favourite"): bool}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_favourite(hass, connection, msg):
     try:
@@ -494,6 +518,7 @@ async def ws_favourite(hass, connection, msg):
 @websocket_api.websocket_command(
     {vol.Required("type"): "moode/stations/play", vol.Required("entry_id"): str, vol.Required("url"): str}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_play(hass, connection, msg):
     try:
@@ -677,6 +702,7 @@ def note_stations_changed(hass: HomeAssistant, entry_id: str) -> None:
     {vol.Required("type"): "moode/stations/sync", vol.Required("source"): str,
      vol.Required("targets"): [str], vol.Optional("mirror", default=False): bool}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_sync(hass, connection, msg):
     """Copy the source box's stations (with logos) to other boxes, updating changed ones.
@@ -692,6 +718,7 @@ async def ws_sync(hass, connection, msg):
     {vol.Required("type"): "moode/stations/backup", vol.Required("entry_id"): str,
      vol.Optional("names"): [str]}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_backup(hass, connection, msg):
     """Station rows plus logos (as data: URLs). Pass `names` to fetch in chunks."""
@@ -724,6 +751,7 @@ async def ws_backup(hass, connection, msg):
      vol.Optional("delete_others", default=False): bool,
      vol.Optional("keep", default=list): [str]}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_restore(hass, connection, msg):
     """Add backup stations that are missing. With delete_others, also remove stations
@@ -759,6 +787,7 @@ async def ws_restore(hass, connection, msg):
      vol.Optional("country"): str, vol.Optional("bitrate"): vol.Coerce(str),
      vol.Optional("logo_data"): str}
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_update(hass, connection, msg):
     """Edit a station (name, URL, genre, country, logo). Done as a verified replace:
