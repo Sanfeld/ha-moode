@@ -290,6 +290,63 @@ def parse_release(html: str) -> str | None:
     return m.group(1) if m else None
 
 
+@dataclass
+class TrxForm:
+    """moOde's Multiroom settings page (trx-config.php), as read from its HTML."""
+
+    values: dict[str, str] = field(default_factory=dict)        # field -> current value
+    choices: dict[str, list[str]] = field(default_factory=dict)  # select/radio -> allowed values
+    disabled: set[str] = field(default_factory=set)             # fields moOde greys out
+    csrf: str | None = None
+
+
+_TAG = re.compile(r"<(select|input)\b([^>]*)>", re.I | re.S)
+_ATTR = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
+
+
+def parse_trx_form(page: str) -> TrxForm:
+    """Selects (with their options), radio groups and text/number inputs by name."""
+    form = TrxForm()
+    for m in _TAG.finditer(page):
+        tag, raw = m.group(1).lower(), m.group(2)
+        attrs = dict(_ATTR.findall(raw))
+        name = attrs.get("name")
+        if not name:
+            continue
+        flags = set(re.sub(r'"[^"]*"', "", raw).lower().split())
+        if tag == "select":
+            body = page[m.end(): page.find("</select>", m.end())]
+            opts = re.findall(r'<option\s+value="([^"]*)"([^>]*)>', body, re.I)
+            form.choices[name] = [v for v, _ in opts]
+            sel = [v for v, rest in opts if "selected" in rest.lower()]
+            if sel:
+                form.values[name] = sel[0]
+            if "disabled" in flags:
+                form.disabled.add(name)
+            continue
+        kind = attrs.get("type", "text").lower()
+        if name == "csrf_token":
+            form.csrf = html.unescape(attrs.get("value", "")) or form.csrf
+        elif kind == "radio":
+            form.choices.setdefault(name, []).append(attrs.get("value", ""))
+            if "checked" in attrs or "checked" in flags:
+                form.values[name] = attrs.get("value", "")
+            if "disabled" in flags:
+                form.disabled.add(name)
+        elif kind in ("text", "number"):
+            form.values[name] = html.unescape(attrs.get("value", ""))
+            if "disabled" in flags:
+                form.disabled.add(name)
+    return form
+
+
+def parse_pi_model(text: str) -> str | None:
+    """'Pi model = Pi-4B 1.4 4GB' from moOde's System info -> 'Pi-4B 1.4 4GB'."""
+    m = re.search(r"Pi model\s*=\s*([^\n<]+)", text)
+    model = html.unescape(m.group(1)).strip() if m else ""
+    return model or None
+
+
 def artist_key(name: str) -> str:
     """Loose form of an artist name for matching: 'The Allman Brothers Band' ==
     'Allman Brothers Band', 'Simon & Garfunkel' == 'Simon and Garfunkel'."""
@@ -488,6 +545,21 @@ class MoodeClient:
             _LOGGER.debug("%s: couldn't open moOde's page for a session: %s", self.host, err)
         return {}
 
+    async def get_pi_model(self) -> str | None:
+        """Which Raspberry Pi the box is, from moOde's System info page (takes a few seconds:
+        moOde gathers all its system information for that page)."""
+        kwargs: dict[str, Any] = {}
+        if ClientTimeout is not None:
+            kwargs["timeout"] = ClientTimeout(total=45)
+        try:
+            async with self._session.get(f"{self.base_url}/sysinfo.php", **kwargs) as resp:
+                if resp.status != 200:
+                    return None
+                return parse_pi_model((await resp.read()).decode("utf-8", "replace"))
+        except (ClientError, asyncio.TimeoutError, OSError) as err:
+            _LOGGER.debug("%s: couldn't read the Pi model: %s", self.host, err)
+            return None
+
     async def get_release(self) -> str | None:
         """The moOde version installed on the box, e.g. '9.4.2' (None if unknown)."""
         kwargs: dict[str, Any] = {}
@@ -501,6 +573,56 @@ class MoodeClient:
         except (ClientError, asyncio.TimeoutError, OSError) as err:
             _LOGGER.debug("%s: couldn't read the moOde version: %s", self.host, err)
             return None
+
+    # ---- multiroom settings page (what moOde's own Configure -> Multiroom does) --------
+
+    async def _trx_request(self, method: str, data: dict[str, str] | None = None,
+                           cookie: dict[str, str] | None = None) -> tuple[str, dict[str, str]]:
+        kwargs: dict[str, Any] = {"headers": cookie or {}}
+        if ClientTimeout is not None:
+            kwargs["timeout"] = ClientTimeout(total=30)
+        if data is not None:
+            kwargs["data"] = data
+        try:
+            async with self._session.request(method, f"{self.base_url}/trx-config.php", **kwargs) as resp:
+                if resp.status != 200:
+                    raise MoodeError(f"Multiroom page: HTTP {resp.status}")
+                body = (await resp.read()).decode("utf-8", "replace")
+                if not cookie:
+                    sid = None
+                    if getattr(resp, "cookies", None) and "PHPSESSID" in resp.cookies:
+                        sid = resp.cookies["PHPSESSID"].value
+                    else:
+                        for h in resp.headers.getall("Set-Cookie", []) if hasattr(resp.headers, "getall") else []:
+                            if h.startswith("PHPSESSID="):
+                                sid = h.split(";", 1)[0].split("=", 1)[1]
+                    cookie = {"Cookie": f"PHPSESSID={sid}"} if sid else {}
+                return body, cookie
+        except (ClientError, asyncio.TimeoutError, OSError) as err:
+            raise MoodeError(f"Multiroom page: {err}") from err
+
+    async def trx_read(self) -> tuple[TrxForm, dict[str, str]]:
+        """Open the Multiroom page: its current settings plus the session to change them.
+        moOde fills the page from its own session, so send moOde's session cookie (from its
+        start page, as a browser has it); without it the page comes back blank."""
+        cookie = await self._moode_session_cookie()
+        if not cookie:
+            raise MoodeError("moOde didn't give Home Assistant a session")
+        body, cookie = await self._trx_request("GET", cookie=cookie)
+        form = parse_trx_form(body)
+        if "multiroom_rx" not in form.values:  # (the security token only exists from moOde 10.4)
+            raise MoodeError("moOde's Multiroom page looks different from what this version "
+                             "knows; please set multiroom up by hand in moOde")
+        return form, cookie
+
+    async def trx_set(self, button: str, values: dict[str, str] | None = None) -> TrxForm:
+        """Submit one setting the way the page's own button does; returns the page after."""
+        form, cookie = await self.trx_read()
+        data = {button: "novalue", **(values or {})}
+        if form.csrf:
+            data["csrf_token"] = form.csrf
+        body, _ = await self._trx_request("POST", data, cookie)
+        return parse_trx_form(body)
 
     def tmp_logo_url(self, name: str) -> str:
         return f"{self.base_url}/imagesw/radio-logos/__tmp__{quote(name, safe='')}.jpg"

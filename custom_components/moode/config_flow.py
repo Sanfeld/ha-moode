@@ -72,6 +72,63 @@ class MoodeConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._host: str | None = None
         self._name: str | None = None
+        self._title: str | None = None
+
+    # ---- multiroom role for a new box -------------------------------------------
+
+    def _senders(self) -> list[ConfigEntry]:
+        return [e for e in self.hass.config_entries.async_entries(DOMAIN)
+                if receiver_ids(e) and loaded(e) is not None]
+
+    async def _finish(self, title: str, host: str) -> ConfigFlowResult:
+        """Box confirmed: ask its multiroom role first, if there's a choice to make."""
+        self._title, self._host = title, host
+        if not self.hass.config_entries.async_entries(DOMAIN):
+            return self.async_create_entry(title=title, data={CONF_HOST: host})
+        return await self.async_step_multiroom()
+
+    async def async_step_multiroom(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        from .provision import (apply, discover_receivers, join_zone_when_added,
+                                plan_receiver, plan_sender)
+
+        assert self._title and self._host
+        errors: dict[str, str] = {}
+        placeholders = {"name": self._title, "error": ""}
+        senders = self._senders()
+        if user_input is not None:
+            choice = user_input["role"]
+            if choice == "standalone":
+                return self.async_create_entry(title=self._title, data={CONF_HOST: self._host})
+            client = MoodeClient(self._host, async_get_clientsession(self.hass))
+            try:
+                if choice == "sender":
+                    await apply(client, await plan_sender(client))
+                    return self.async_create_entry(title=self._title, data={CONF_HOST: self._host})
+                sender = self.hass.config_entries.async_get_entry(choice.removeprefix("receiver:"))
+                if (sc := loaded(sender)) is None:
+                    raise MoodeError("that zone's sender isn't connected right now")
+                template = next((c.client for r in receiver_ids(sender)
+                                 if (c := loaded(self.hass.config_entries.async_get_entry(r))) is not None), None)
+                await apply(client, await plan_receiver(client, sc.client, template))
+                await discover_receivers(sc.client)
+                self.hass.async_create_background_task(
+                    join_zone_when_added(self.hass, self.unique_id, sender.entry_id),
+                    f"moode join zone {self.unique_id}")
+                return self.async_create_entry(title=self._title, data={CONF_HOST: self._host})
+            except MoodeError as err:
+                errors["base"] = "provision_failed"
+                placeholders["error"] = str(err)
+        options = [SelectOptionDict(value="standalone", label="Stand-alone (no multiroom)")]
+        options += [SelectOptionDict(value=f"receiver:{e.entry_id}",
+                                     label=f"Receiver: a room in {opt(e, CONF_ZONE_NAME) or e.title}") for e in senders]
+        options.append(SelectOptionDict(value="sender", label="Sender: plays to rooms in a zone"))
+        return self.async_show_form(
+            step_id="multiroom",
+            data_schema=vol.Schema({vol.Required("role", default="standalone"): SelectSelector(
+                SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST))}),
+            errors=errors,
+            description_placeholders=placeholders,
+        )
 
     async def _validate(self, host: str) -> str | None:
         client = MoodeClient(host, async_get_clientsession(self.hass))
@@ -94,7 +151,7 @@ class MoodeConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(box_id)
                 self._abort_if_unique_id_configured(updates={CONF_HOST: host})
                 name = user_input.get(CONF_NAME) or pretty_name(box_id)
-                return self.async_create_entry(title=name, data={CONF_HOST: host})
+                return await self._finish(name, host)
 
         return self.async_show_form(
             step_id="user",
@@ -138,9 +195,7 @@ class MoodeConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         assert self._host and self._name
         if user_input is not None:
-            return self.async_create_entry(
-                title=user_input.get(CONF_NAME) or self._name, data={CONF_HOST: self._host}
-            )
+            return await self._finish(user_input.get(CONF_NAME) or self._name, self._host)
         return self.async_show_form(
             step_id="discovery_confirm",
             data_schema=vol.Schema({vol.Optional(CONF_NAME, default=self._name): str}),

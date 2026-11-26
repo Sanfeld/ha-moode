@@ -22,10 +22,18 @@
         "data": {
           "host": "IP address or hostname"
         }
+      },
+      "multiroom": {
+        "title": "Multiroom for {name}",
+        "description": "Should {name} take part in multiroom? Home Assistant sets it up in moOde's Configure → Multiroom for you.\n\n- **Receiver**: copies the settings of a room that already works in that zone, switches the receiver on and adds the room to the zone.\n- **Sender**: switches on Loopback and the multiroom sender.\n\nThe audio device, DSP and volume type are not changed. {error}",
+        "data": {
+          "role": "Role"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Couldn't reach moOde at that address. Check the IP/hostname and that the box is on."
+      "cannot_connect": "Couldn't reach moOde at that address. Check the IP/hostname and that the box is on.",
+      "provision_failed": "Multiroom setup didn't work. You can try again, or choose Stand-alone and set it up in moOde."
     },
     "abort": {
       "already_configured": "This moOde box is already set up.",
@@ -171,6 +179,12 @@
         "fixed": "Fixed – an amp controls the volume",
         "variable": "Variable – control volume here"
       }
+    },
+    "provision_role": {
+      "options": {
+        "receiver": "Receiver (a room in a zone)",
+        "sender": "Sender"
+      }
     }
   },
   "issues": {
@@ -203,6 +217,32 @@
         "mirror": {
           "name": "Exact copy",
           "description": "Also delete stations the source doesn't have."
+        }
+      }
+    },
+    "provision_multiroom": {
+      "name": "Set up multiroom",
+      "description": "Sets a box up in moOde's multiroom settings, as a receiver in a zone or as the sender, the same as doing it in moOde's Configure → Multiroom.",
+      "fields": {
+        "box": {
+          "name": "Box",
+          "description": "The moOde player to set up."
+        },
+        "role": {
+          "name": "Role",
+          "description": "Receiver: a room that plays what a sender sends. Sender: the box that sends to the rooms."
+        },
+        "sender": {
+          "name": "Zone (sender)",
+          "description": "For a receiver: the sender whose zone it joins."
+        },
+        "copy_from": {
+          "name": "Copy settings from",
+          "description": "For a receiver: a working receiver to copy buffer and output settings from. Empty: a room already in the zone."
+        },
+        "dry_run": {
+          "name": "Only show what would change",
+          "description": "Lists the changes without making them."
         }
       }
     }

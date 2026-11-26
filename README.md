@@ -46,7 +46,7 @@ Control your [moOde audio](https://moodeaudio.org) players and multiroom zones f
 ## Setup
 
 1. Your boxes show up under **Settings → Devices & services → Discovered**. Click **Add** for each, or use *Add integration → moOde Audio* with an IP address or hostname.
-2. For multiroom: set each box's role in moOde (*Configure → Multiroom*). Then open your sender in HA (*moOde Audio → box → Configure → Multiroom zone*) and tick its receivers.
+2. For multiroom: when you add a box, choose its role (**Receiver** in an existing zone, **Sender** or **Stand-alone**) and Home Assistant sets it up in moOde's *Configure → Multiroom* for you: a receiver gets the zone's multicast address and the settings of a room that already works, and joins the zone. For a box that's already added, use the action `moode.provision_multiroom` (it can also just show what it would change). You can still set roles by hand in moOde and tick receivers under *moOde Audio → sender → Configure → Multiroom zone*.
 3. Optional per box, under **Configure**: *Favourite stations*, *Amplifier*, *Volume control* (Fixed if an amp does the volume), *Sleep timer* and *Announcements*.
 
 ### Dashboard (builds itself)

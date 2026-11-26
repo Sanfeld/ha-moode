@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.0 (2026-11-26)
+
+- Multiroom setup from Home Assistant: when a new box is added, choose Stand-alone, Receiver
+  (a room in an existing zone) or Sender, and Home Assistant sets it up in moOde's
+  Configure → Multiroom: a receiver gets the zone's multicast address and the buffer/output
+  settings of a room that already works, is switched on and added to the zone; a sender gets
+  Loopback and the multiroom sender switched on. Audio device, DSP and volume type are
+  not touched
+- New action `moode.provision_multiroom` does the same for a box that's already added (for
+  example after reinstalling moOde), with a "only show what would change" option
+- Each box's device page shows which Raspberry Pi it is (e.g. "Pi-4B 1.4 4GB"), read once
+  from moOde's System info
+- Dashboard: a volume slider under each box, room and zone whose volume can be changed (Hardware
+  or Software volume in moOde)
+
 ## 1.4.4 (2026-11-26)
 
 Security fixes from the Home Assistant Marketplace review:

@@ -834,3 +834,53 @@ def test_fixed_volume_from_moode10_volume_state():
     fixed, variable = run(go())
     assert fixed.fixed_volume is True
     assert variable.fixed_volume is False
+
+
+TRX_PAGE = """
+<form class="form-horizontal" method="post">
+<input type="hidden" name="csrf_token" value="5f2c9a">
+<input type="radio" name="multiroom_tx" id="toggle-multiroom-tx-1" value="On" onchange="autoClick('#btn-set-multiroom-tx');" disabled>
+<input type="radio" name="multiroom_tx" id="toggle-multiroom-tx-2" value="Off" checked="checked" onchange="autoClick('#btn-set-multiroom-tx');" disabled>
+<input type="radio" name="alsa_loopback" id="toggle-alsa-loopback-1" value="On" onchange="autoClick('#btn-set-alsa-loopback');" >
+<input type="radio" name="alsa_loopback" id="toggle-alsa-loopback-2" value="Off" checked="checked" onchange="autoClick('#btn-set-alsa-loopback');" >
+<input id="multiroom-tx-host" class="config-input-large" type="text" name="multiroom_tx_host" value="239.0.0.1">
+<select id="multiroom-rx" class="config-select-large" name="multiroom_rx" onchange="autoClick('#btn-set-multiroom-rx');" >
+<option value="Disabled" selected>Disabled</option>
+<option value="On" >On</option>
+<option value="Off" >Off</option>
+</select>
+<select id="multiroom-rx-alsa-output-mode" class="config-select-large" name="multiroom_rx_alsa_output_mode">
+<option value="plughw" selected>Default</option>
+<option value="hw" >Direct</option>
+</select>
+<input id="multiroom-rx-alsavol" class="config-input-large" type="number" maxlength="3" min="1" max="100" name="multiroom_rx_alsavol" value="100" disabled>
+<input id="multiroom-rx-host" class="config-input-large" type="text" name="multiroom_rx_host" value="239.0.0.9">
+<button class="btn" type="submit" name="update_multiroom_rx_host" value="novalue"></button>
+</form>
+"""
+
+
+def test_parse_trx_form():
+    f = api.parse_trx_form(TRX_PAGE)
+    assert f.csrf == "5f2c9a"
+    assert f.values["multiroom_tx"] == "Off" and f.values["alsa_loopback"] == "Off"
+    assert f.values["multiroom_rx"] == "Disabled"
+    assert f.choices["multiroom_rx"] == ["Disabled", "On", "Off"]
+    assert f.choices["multiroom_rx_alsa_output_mode"] == ["plughw", "hw"]
+    assert f.values["multiroom_rx_host"] == "239.0.0.9"
+    assert f.values["multiroom_tx_host"] == "239.0.0.1"
+    assert {"multiroom_tx", "multiroom_rx_alsavol"} <= f.disabled
+    assert "multiroom_rx" not in f.disabled
+
+
+def test_parse_pi_model():
+    page = '<div id="container-sysinfo"><pre class="sysinfo-modal">\nS Y S T E M   P A R A M E T E R S\n' \
+           'moOde\t\t\t= 10.3.7 2026-10-01\nPi model\t\t= Pi-4B 1.4 4GB\nMemory total\t\t= 3794 MB\n</pre></div>'
+    assert api.parse_pi_model(page) == "Pi-4B 1.4 4GB"
+    assert api.parse_pi_model("<html>nothing here</html>") is None
+
+
+def test_parse_trx_form_without_token():
+    """moOde 10.3.x has no security token on the Multiroom page; the settings are the same."""
+    f = api.parse_trx_form(TRX_PAGE.replace('<input type="hidden" name="csrf_token" value="5f2c9a">', ""))
+    assert f.csrf is None and f.values["multiroom_rx"] == "Disabled"
