@@ -31,6 +31,9 @@ function dashboardSignature(hass) {
   return moodeEntities(hass).map(([id, fav]) => {
     const s = hass.states[id];
     const ok = !s ? "-" : s.state === "unavailable" ? "u" : "a";
+    // a volume slider appears/disappears when a box's volume becomes adjustable
+    const vol = s && id.startsWith("media_player.") && (s.attributes.supported_features & 4) ? ":v" : "";
+    if (vol) return `${id}:${ok}${vol}`;
     return fav && s ? `${id}:${ok}:${s.attributes.entity_picture || ""}:${s.attributes.friendly_name || ""}` : `${id}:${ok}`;
   }).join("|");
 }
@@ -80,6 +83,21 @@ class MoodeMusicStrategy extends HTMLElement {
     const receivers = boxes.filter(isRoom).sort(byName);
     const zoneSenders = new Set(zones.map((z) => senderOf(z)?.entity_id).filter(Boolean));
     const offline = (id) => st(id)?.state === "unavailable";
+    // A volume slider for a box or zone whose volume can be changed (Hardware or
+    // Software volume in moOde); boxes on Fixed volume get none.
+    const volumeCards = (id) =>
+      attr(id, "supported_features") & 4
+        ? [{
+            type: "tile",
+            entity: id,
+            name: "Volume",
+            icon: "mdi:volume-high",
+            hide_state: true,
+            features_position: "bottom",
+            features: [{ type: "media-player-volume-slider" }],
+            grid_options: { columns: 12, rows: 2 },
+          }]
+        : [];
     const offlineCard = (name) => ({
       type: "markdown",
       content: `**${name} is offline.**\n\nIts music controls come back on their own as soon as it is on the network again.`,
@@ -233,6 +251,7 @@ class MoodeMusicStrategy extends HTMLElement {
       } else {
         cards.push(
           { type: "media-control", entity: zone.entity_id, grid_options: { columns: 12 } },
+          ...volumeCards(zone.entity_id),
           ...zoneButtons(zone.entity_id),
         );
         if (sender) cards.push(...ampCards(sender), ...stationCards(sender));
@@ -248,6 +267,7 @@ class MoodeMusicStrategy extends HTMLElement {
           : [
               { type: "heading", heading: box.name, icon: "mdi:speaker" },
               { type: "media-control", entity: box.entity_id, grid_options: { columns: 12 } },
+              ...volumeCards(box.entity_id),
               ...ampCards(box),
               ...stationCards(box),
             ],
