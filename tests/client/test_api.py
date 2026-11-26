@@ -878,3 +878,9 @@ def test_parse_pi_model():
            'moOde\t\t\t= 10.3.7 2026-10-01\nPi model\t\t= Pi-4B 1.4 4GB\nMemory total\t\t= 3794 MB\n</pre></div>'
     assert api.parse_pi_model(page) == "Pi-4B 1.4 4GB"
     assert api.parse_pi_model("<html>nothing here</html>") is None
+
+
+def test_parse_trx_form_without_token():
+    """moOde 10.3.x has no security token on the Multiroom page; the settings are the same."""
+    f = api.parse_trx_form(TRX_PAGE.replace('<input type="hidden" name="csrf_token" value="5f2c9a">', ""))
+    assert f.csrf is None and f.values["multiroom_rx"] == "Disabled"

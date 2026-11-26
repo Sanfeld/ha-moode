@@ -605,7 +605,7 @@ class MoodeClient:
         """Open the Multiroom page: its current settings plus the session to change them."""
         body, cookie = await self._trx_request("GET")
         form = parse_trx_form(body)
-        if not form.csrf or "multiroom_rx" not in form.values:
+        if "multiroom_rx" not in form.values:  # (the security token only exists from moOde 10.4)
             raise MoodeError("moOde's Multiroom page looks different from what this version "
                              "knows; please set multiroom up by hand in moOde")
         return form, cookie
@@ -613,7 +613,9 @@ class MoodeClient:
     async def trx_set(self, button: str, values: dict[str, str] | None = None) -> TrxForm:
         """Submit one setting the way the page's own button does; returns the page after."""
         form, cookie = await self.trx_read()
-        data = {"csrf_token": form.csrf or "", button: "novalue", **(values or {})}
+        data = {button: "novalue", **(values or {})}
+        if form.csrf:
+            data["csrf_token"] = form.csrf
         body, _ = await self._trx_request("POST", data, cookie)
         return parse_trx_form(body)
 
