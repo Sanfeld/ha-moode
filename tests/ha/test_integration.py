@@ -173,6 +173,7 @@ async def test_controls_follow_the_box_role(hass: HomeAssistant, mock_moode) -> 
 
     dev = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "moodestreamer")})
     assert dev.sw_version == "9.4.2"
+    assert dev.hw_version == "Pi-4B 1.4 4GB"
 
     # Take the Kitchen out of the zone: it becomes a box of its own (receiver off in moOde)
     hass.config_entries.async_update_entry(sender, options={"receivers": []})

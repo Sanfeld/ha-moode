@@ -871,3 +871,10 @@ def test_parse_trx_form():
     assert f.values["multiroom_tx_host"] == "239.0.0.1"
     assert {"multiroom_tx", "multiroom_rx_alsavol"} <= f.disabled
     assert "multiroom_rx" not in f.disabled
+
+
+def test_parse_pi_model():
+    page = '<div id="container-sysinfo"><pre class="sysinfo-modal">\nS Y S T E M   P A R A M E T E R S\n' \
+           'moOde\t\t\t= 10.3.7 2026-10-01\nPi model\t\t= Pi-4B 1.4 4GB\nMemory total\t\t= 3794 MB\n</pre></div>'
+    assert api.parse_pi_model(page) == "Pi-4B 1.4 4GB"
+    assert api.parse_pi_model("<html>nothing here</html>") is None

@@ -10,6 +10,8 @@
   not touched
 - New action `moode.provision_multiroom` does the same for a box that's already added (for
   example after reinstalling moOde), with a "only show what would change" option
+- Each box's device page shows which Raspberry Pi it is (e.g. "Pi-4B 1.4 4GB"), read once
+  from moOde's System info
 
 ## 1.4.3 (2026-11-22)
 

@@ -340,6 +340,13 @@ def parse_trx_form(page: str) -> TrxForm:
     return form
 
 
+def parse_pi_model(text: str) -> str | None:
+    """'Pi model = Pi-4B 1.4 4GB' from moOde's System info -> 'Pi-4B 1.4 4GB'."""
+    m = re.search(r"Pi model\s*=\s*([^\n<]+)", text)
+    model = html.unescape(m.group(1)).strip() if m else ""
+    return model or None
+
+
 def artist_key(name: str) -> str:
     """Loose form of an artist name for matching: 'The Allman Brothers Band' ==
     'Allman Brothers Band', 'Simon & Garfunkel' == 'Simon and Garfunkel'."""
@@ -537,6 +544,21 @@ class MoodeClient:
         except (ClientError, asyncio.TimeoutError, OSError) as err:
             _LOGGER.debug("%s: couldn't open moOde's page for a session: %s", self.host, err)
         return {}
+
+    async def get_pi_model(self) -> str | None:
+        """Which Raspberry Pi the box is, from moOde's System info page (takes a few seconds:
+        moOde gathers all its system information for that page)."""
+        kwargs: dict[str, Any] = {}
+        if ClientTimeout is not None:
+            kwargs["timeout"] = ClientTimeout(total=45)
+        try:
+            async with self._session.get(f"{self.base_url}/sysinfo.php", **kwargs) as resp:
+                if resp.status != 200:
+                    return None
+                return parse_pi_model((await resp.read()).decode("utf-8", "replace"))
+        except (ClientError, asyncio.TimeoutError, OSError) as err:
+            _LOGGER.debug("%s: couldn't read the Pi model: %s", self.host, err)
+            return None
 
     async def get_release(self) -> str | None:
         """The moOde version installed on the box, e.g. '9.4.2' (None if unknown)."""

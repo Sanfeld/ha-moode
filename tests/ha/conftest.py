@@ -31,6 +31,7 @@ def mock_moode():
         patch("custom_components.moode.api.MoodeClient.fetch_state", AsyncMock(return_value=make_state())) as fetch,
         patch("custom_components.moode.api.MoodeClient.idle_forever", AsyncMock(return_value=None)),
         patch("custom_components.moode.api.MoodeClient.get_release", AsyncMock(return_value="9.4.2")),
+        patch("custom_components.moode.api.MoodeClient.get_pi_model", AsyncMock(return_value="Pi-4B 1.4 4GB")),
         patch("custom_components.moode.api.MoodeClient.lsinfo", AsyncMock(return_value=[])),
         patch("custom_components.moode.api.MoodeClient.get_stations", AsyncMock(return_value=[])),
         patch("custom_components.moode.api.MoodeClient.play", AsyncMock()) as play,

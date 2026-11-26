@@ -22,3 +22,5 @@ class MoodeEntity(CoordinatorEntity[MoodeCoordinator]):
             sw_version=getattr(coordinator, "release", None),
             configuration_url=coordinator.client.base_url,
         )
+        if model := getattr(coordinator, "pi_model", None):
+            self._attr_device_info["hw_version"] = model
