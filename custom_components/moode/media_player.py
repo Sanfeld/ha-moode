@@ -34,7 +34,7 @@ from .const import (
     opt,
 )
 from .coordinator import MoodeCoordinator
-from .entity import MoodeEntity
+from .entity import MoodeEntity, show_pi_model
 from .zones import entry_for_entity, loaded, player_entity_id, receivers_of, sender_for, zone_off
 
 STATE_MAP = {
@@ -212,6 +212,10 @@ class MoodeMediaPlayer(_Playback, MoodeEntity, MediaPlayerEntity):
         super().__init__(coordinator, entry.entry_id, entry.unique_id, entry.title)
         self._entry = entry
         self._attr_unique_id = f"{self._box_id}_player"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        show_pi_model(self.hass, self._entry, self.coordinator)
 
     # -- zone relations ----------------------------------------------------
 

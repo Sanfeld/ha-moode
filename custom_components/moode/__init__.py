@@ -45,9 +45,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-_PI_MODELS: dict[str, str] = {}  # entry_id -> Pi model; it doesn't change, so read it once
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: MoodeConfigEntry) -> bool:
     client = MoodeClient(entry.data[CONF_HOST], async_get_clientsession(hass))
     coordinator = MoodeCoordinator(hass, client, entry, entry.options.get(CONF_VOLUME_MODE, "auto"))
@@ -57,27 +54,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: MoodeConfigEntry) -> boo
     entry.runtime_data = coordinator
     coordinator.role = role(hass, entry)  # which controls this box got (see select/switch)
     coordinator.release = await client.get_release()  # shown on the device page
-    coordinator.pi_model = _PI_MODELS.get(entry.entry_id)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    def _show_pi_model(model: str) -> None:
-        coordinator.pi_model = _PI_MODELS[entry.entry_id] = model
-        reg = dr.async_get(hass)
-        if dev := reg.async_get_device(identifiers={(DOMAIN, entry.unique_id or entry.entry_id)}):
-            reg.async_update_device(dev.id, hw_version=model)
-
-    async def _read_pi_model() -> None:
-        """Which Pi this is, for the device page. Read once in the background (moOde takes a
-        few seconds to build its System info page) and kept across reloads."""
-        if coordinator.pi_model is None and (model := await client.get_pi_model()):
-            _show_pi_model(model)
-
-    entry.async_create_background_task(hass, _read_pi_model(), f"moode pi model {entry.entry_id}")
 
     async def _check_release(_now=None) -> None:
         """moOde updates in place: show the new version without a restart."""
-        if coordinator.pi_model is None:  # box was offline at start-up
-            await _read_pi_model()
         rel = await client.get_release()
         if rel and rel != coordinator.release:
             coordinator.release = rel
