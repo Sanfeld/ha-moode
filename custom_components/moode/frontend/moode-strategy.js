@@ -286,6 +286,7 @@ class MoodeMusicStrategy extends HTMLElement {
           state_content: ["media_title", "media_artist"],
           grid_options: { columns: 12 },
         });
+        cards.push(...volumeCards(r.entity_id));
         for (const [key, name, icon] of [
           ["room_mode", "Mode", "mdi:speaker-multiple"],
           ["room_station", "Station", "mdi:radio"],

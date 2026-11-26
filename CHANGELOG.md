@@ -12,7 +12,7 @@
   example after reinstalling moOde), with a "only show what would change" option
 - Each box's device page shows which Raspberry Pi it is (e.g. "Pi-4B 1.4 4GB"), read once
   from moOde's System info
-- Dashboard: a volume slider under each box and zone whose volume can be changed (Hardware
+- Dashboard: a volume slider under each box, room and zone whose volume can be changed (Hardware
   or Software volume in moOde)
 
 ## 1.4.4 (unreleased)
