@@ -24,6 +24,7 @@ Control your [moOde audio](https://moodeaudio.org) players and multiroom zones f
 - **A media player per box**: play, pause, skip, seek, cover art, and volume (hidden for fixed-volume setups).
 - **Instant updates**: changes made anywhere (moOde's web page, phone apps) show up in HA right away.
 - **Multiroom zones**: pick a sender and its receivers. Every room can be set to **Zone** (plays along), **Solo** (plays its own station) or **Off**. A zone player switches everything on or off, and **All rooms on** resumes the music.
+- **Master volume**: one slider for every room playing in a zone, even with a Fixed-volume sender. Each room spreads it over its own quietest–loudest range, and rooms without volume control of their own can follow with their amplifier.
 - **Stations**: favourite-station buttons with logos, an *All stations* dropdown, *Recently played*, and a per-room station picker.
 - **Stations manager** (dashboard tab): check every stream and remove dead ones, bulk delete, ★ favourites, **edit** stations (name, URL, logo upload), add stations from the **radio-browser.info** directory (~50,000 stations), **back up / restore**, and **sync** station lists between boxes.
 - **Music library** (dashboard *FLACs* tab): browse the music stored on a box by **artist**, **album** (with cover art) and **genre**, search it, see **recently added** albums, and play, **shuffle** (an album, artist, genre or everything) or **add to the queue**. It plays on that box and its zone.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.6.0 (unreleased)
+## 1.6.0 (2026-11-27)
 
 - **Master volume** ("one volume to rule them all"): a zone whose sender has Fixed volume
   now has a volume slider that sets every room playing in the zone. Each room spreads the
