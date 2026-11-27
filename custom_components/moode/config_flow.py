@@ -13,6 +13,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -35,6 +38,9 @@ from .const import (
     CONF_AUTO_SYNC,
     CONF_FAV_WAKE_ZONE,
     CONF_VOLUME_MODE,
+    CONF_ZONE_FOLLOW,
+    CONF_ZONE_MAX,
+    CONF_ZONE_MIN,
     CONF_FAVOURITES,
     CONF_RECEIVERS,
     CONF_SLEEP_ACTION,
@@ -326,15 +332,30 @@ class MoodeOptionsFlow(OptionsFlow):
 
     async def async_step_volume(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         entry = self.config_entry
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self._save(**user_input)
+            if user_input[CONF_ZONE_MIN] >= user_input[CONF_ZONE_MAX]:
+                errors["base"] = "zone_range"
+            elif user_input[CONF_ZONE_FOLLOW] == "amp" and not entry.options.get(CONF_AMPLIFIER):
+                errors["base"] = "zone_no_amp"
+            else:
+                return self._save(**{k: int(v) if k in (CONF_ZONE_MIN, CONF_ZONE_MAX) else v
+                                     for k, v in user_input.items()})
+        pct = NumberSelector(NumberSelectorConfig(min=0, max=100, step=1, unit_of_measurement="%",
+                                                  mode=NumberSelectorMode.SLIDER))
         return self.async_show_form(
             step_id="volume",
             data_schema=vol.Schema({
                 vol.Required(CONF_VOLUME_MODE, default=opt(entry, CONF_VOLUME_MODE)): SelectSelector(
                     SelectSelectorConfig(options=["auto", "fixed", "variable"], translation_key="volume_mode")
                 ),
+                vol.Required(CONF_ZONE_FOLLOW, default=opt(entry, CONF_ZONE_FOLLOW)): SelectSelector(
+                    SelectSelectorConfig(options=["auto", "box", "amp", "none"], translation_key="zone_follow")
+                ),
+                vol.Required(CONF_ZONE_MIN, default=opt(entry, CONF_ZONE_MIN)): pct,
+                vol.Required(CONF_ZONE_MAX, default=opt(entry, CONF_ZONE_MAX)): pct,
             }),
+            errors=errors,
         )
 
     # ---- music library ---------------------------------------------------------

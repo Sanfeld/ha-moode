@@ -441,3 +441,72 @@ async def test_box_changing_actions_are_admin_only(hass: HomeAssistant, mock_moo
         with pytest.raises(Unauthorized):
             await hass.services.async_call(DOMAIN, action, data, blocking=True, return_response=True,
                                            context=Context(user_id=hass_read_only_user.id))
+
+
+async def test_master_volume_sets_every_room_in_the_zone(hass: HomeAssistant, mock_moode) -> None:
+    """With a Fixed-volume sender, the zone volume is HA's master: it sets each room playing
+    in the zone over that room's own range, leaves rooms that don't follow alone, and a
+    room that joins later takes the master volume too."""
+    from unittest.mock import patch
+
+    from custom_components.moode import api
+    from custom_components.moode.api import ReceiverStatus
+
+    from .conftest import make_state
+
+    rx = {"192.0.2.11": "On", "192.0.2.12": "On", "192.0.2.13": "Off"}
+    states = {
+        "192.0.2.10": make_state(fixed_volume=True),
+        "192.0.2.11": make_state(volume=50),
+        "192.0.2.12": make_state(volume=None, fixed_volume=True),   # no volume of its own
+        "192.0.2.13": make_state(volume=50),
+    }
+    set_calls = []
+
+    async def fetch_state(self, *args, **kwargs):
+        st = states[self.host]
+        if self.host in rx:
+            st.receiver = ReceiverStatus(state=rx[self.host])
+        return st
+
+    async def set_volume(self, level, *args, **kwargs):
+        set_calls.append((self.host, level))
+
+    kitchen = MockConfigEntry(domain=DOMAIN, title="Kitchen", unique_id="kitchenpi", data={CONF_HOST: "192.0.2.11"},
+                              options={"zone_volume_min": 40, "zone_volume_max": 90})
+    guest = MockConfigEntry(domain=DOMAIN, title="Guest room", unique_id="guestpi", data={CONF_HOST: "192.0.2.12"})
+    office = MockConfigEntry(domain=DOMAIN, title="Office", unique_id="officepi", data={CONF_HOST: "192.0.2.13"})
+    for e in (kitchen, guest, office):
+        e.add_to_hass(hass)
+    sender = MockConfigEntry(domain=DOMAIN, title="Streamer", unique_id="moodestreamer", data={CONF_HOST: "192.0.2.10"},
+                             options={"receivers": [kitchen.entry_id, guest.entry_id, office.entry_id],
+                                      "volume_mode": "fixed"})
+    sender.add_to_hass(hass)
+    with (
+        patch.object(api.MoodeClient, "fetch_state", fetch_state),
+        patch.object(api.MoodeClient, "set_volume", set_volume),
+    ):
+        assert await hass.config_entries.async_setup(sender.entry_id)
+        await hass.async_block_till_done()
+        zone = "media_player.streamer_zone"
+        assert hass.states.get(zone).attributes["supported_features"] & MediaPlayerEntityFeature.VOLUME_SET
+
+        await hass.services.async_call("media_player", "volume_set",
+                                       {"entity_id": zone, "volume_level": 0.5}, blocking=True)
+        assert set_calls == [("192.0.2.11", 65)]          # 40 + (90-40)*0.5; guest room: fixed, office: off
+        assert hass.states.get(zone).attributes["volume_level"] == 0.5
+
+        set_calls.clear()
+        await hass.services.async_call("media_player", "volume_mute",
+                                       {"entity_id": zone, "is_volume_muted": True}, blocking=True)
+        assert set_calls == [("192.0.2.11", 0)]
+        await hass.services.async_call("media_player", "volume_mute",
+                                       {"entity_id": zone, "is_volume_muted": False}, blocking=True)
+
+        # the office joins the zone: it takes the master volume (0-100 range: 50)
+        set_calls.clear()
+        rx["192.0.2.13"] = "On"
+        await hass.config_entries.async_get_entry(office.entry_id).runtime_data.async_refresh()
+        await hass.config_entries.async_get_entry(sender.entry_id).runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert ("192.0.2.13", 50) in set_calls

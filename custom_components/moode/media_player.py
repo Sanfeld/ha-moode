@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from . import MoodeConfigEntry
@@ -35,6 +36,7 @@ from .const import (
 )
 from .coordinator import MoodeCoordinator
 from .entity import MoodeEntity, show_pi_model
+from .master import apply_to_room, follow_mode
 from .zones import entry_for_entity, loaded, player_entity_id, receivers_of, sender_for, zone_off
 
 STATE_MAP = {
@@ -388,8 +390,12 @@ class MoodeMediaPlayer(_Playback, MoodeEntity, MediaPlayerEntity):
 # ------------------------------------------------------------------ zone player
 
 
-class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity):
-    """Sender + its receivers as one player. On/off switches the receivers."""
+class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity, RestoreEntity):
+    """Sender + its receivers as one player. On/off switches the receivers.
+
+    Volume: with an adjustable sender this is the sender's (moOde's own master volume).
+    With a Fixed-volume sender it's a master volume kept by Home Assistant that sets
+    every room playing in the zone (see master.py)."""
 
     _attr_name = None
     # Lets the dashboard recognise the zone even while the sender is offline
@@ -399,6 +405,9 @@ class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity):
     def __init__(self, coordinator: MoodeCoordinator, entry: MoodeConfigEntry) -> None:
         super().__init__(coordinator, entry.entry_id, entry.unique_id, entry.title)
         self._entry = entry
+        self._master: float = 0.5  # HA master volume, 0.0-1.0 (restored after a restart)
+        self._master_muted = False
+        self._joined: set[str] | None = None  # rooms in the zone at the last update
         zone_name = entry.options.get(CONF_ZONE_NAME) or f"{entry.title} zone"
         self._attr_unique_id = f"{self._box_id}_zone"
         self._attr_device_info = DeviceInfo(
@@ -421,15 +430,52 @@ class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity):
             if c.data and c.data.receiver and c.data.receiver.state == "On"
         ]
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None:
+            v = last.attributes.get("volume_level")
+            if isinstance(v, (int, float)) and 0 <= v <= 1:
+                self._master = float(v)
+            self._master_muted = bool(last.attributes.get("is_volume_muted"))
+
+    # -- HA master volume ------------------------------------------------------
+
+    def _ha_master(self) -> bool:
+        """The sender's own volume is Fixed, so the zone volume is HA's master."""
+        d = self.coordinator.data
+        return bool(d is None or d.fixed_volume)
+
+    def _followers(self, only: set[str] | None = None):
+        for r in receivers_of(self.hass, self._entry):
+            c = loaded(r)
+            if (c and c.data and c.data.receiver and c.data.receiver.state == "On"
+                    and (only is None or r.entry_id in only) and follow_mode(r, c) != "none"):
+                yield r, c
+
+    async def _apply_master(self, only: set[str] | None = None) -> None:
+        level = 0.0 if self._master_muted else self._master
+        for r, c in list(self._followers(only)):
+            await apply_to_room(self.hass, r, c, level)
+
     @callback
     def _handle_coordinator_update(self) -> None:
         self._track_position()
+        # A room that joins the zone takes the master volume (not at start-up)
+        joined = {r.entry_id for r in receivers_of(self.hass, self._entry)
+                  if (c := loaded(r)) and c.data and c.data.receiver and c.data.receiver.state == "On"}
+        if self._joined is not None and self._ha_master() and (new := joined - self._joined):
+            self.hass.async_create_task(self._apply_master(new), "moode master volume for new rooms")
+        self._joined = joined
         super()._handle_coordinator_update()
 
     @property
     def supported_features(self) -> MediaPlayerEntityFeature:
         f = TRANSPORT | MediaPlayerEntityFeature.TURN_ON | MediaPlayerEntityFeature.TURN_OFF
-        return f if self.coordinator.data.fixed_volume else f | VOLUME_FEATURES
+        if self._ha_master():
+            return f | VOLUME_FEATURES if self.hass and any(
+                follow_mode(r, loaded(r)) != "none" for r in receivers_of(self.hass, self._entry)) else f
+        return f | VOLUME_FEATURES
 
     @property
     def state(self) -> MediaPlayerState:
@@ -440,12 +486,14 @@ class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity):
     @property
     def volume_level(self):
         d = self.coordinator.data
-        return None if d.volume is None or d.fixed_volume else d.volume / 100
+        if self._ha_master():
+            return self._master
+        return None if d.volume is None else d.volume / 100
 
     @property
     def is_volume_muted(self):
         d = self.coordinator.data
-        return None if d.fixed_volume else d.muted
+        return self._master_muted if self._ha_master() else d.muted
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -536,14 +584,30 @@ class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity):
         return await async_browse(self.coordinator.client, media_content_id)
 
     async def async_set_volume_level(self, volume: float) -> None:
+        if self._ha_master():
+            self._master, self._master_muted = max(0.0, min(1.0, volume)), False
+            self.async_write_ha_state()
+            await self._apply_master()
+            return
         await self._run(self.coordinator.client.set_volume(round(volume * 100)))
 
     async def async_volume_up(self) -> None:
+        if self._ha_master():
+            await self.async_set_volume_level(round(self._master + 0.05, 2))
+            return
         await self._run(self.coordinator.client.volume_step(True))
 
     async def async_volume_down(self) -> None:
+        if self._ha_master():
+            await self.async_set_volume_level(round(self._master - 0.05, 2))
+            return
         await self._run(self.coordinator.client.volume_step(False))
 
     async def async_mute_volume(self, mute: bool) -> None:
+        if self._ha_master():
+            self._master_muted = mute
+            self.async_write_ha_state()
+            await self._apply_master()
+            return
         if mute != self.coordinator.data.muted:
             await self._run(self.coordinator.client.toggle_mute())

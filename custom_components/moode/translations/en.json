@@ -129,9 +129,12 @@
       },
       "volume": {
         "title": "Volume control",
-        "description": "Choose *Fixed* if an amplifier controls the volume (moOde set to Fixed 0dB): the volume slider and mute are hidden. *Variable* always shows them. *Auto* guesses from MPD.",
+        "description": "Choose *Fixed* if an amplifier controls the volume (moOde set to Fixed 0dB): the volume slider and mute are hidden. *Variable* always shows them. *Auto* guesses from MPD.\n\n**Master volume:** when this box plays in a zone, the zone's volume slider (the master) can set this room's volume too. *Box* uses this box's own volume (needs Hardware or Software volume in moOde), *Amplifier* turns the linked amplifier instead (only while it's on), *Auto* uses the box if its volume can be changed, *Don't follow* leaves the room alone.\n\nThe master's 1-100 % is spread over the range below, so 1 % is the quietest useful level and 100 % the loudest you want in this room. DACs with a dB volume scale (e.g. PCM5122 boards) are silent below about 40 %, so a range of 40-90 % works well there.",
         "data": {
-          "volume_mode": "Volume control"
+          "volume_mode": "Volume control",
+          "zone_volume_follow": "Follow the master volume with",
+          "zone_volume_min": "Quietest (master at 1 %)",
+          "zone_volume_max": "Loudest (master at 100 %)"
         }
       },
       "amplifier": {
@@ -160,7 +163,9 @@
       "already_in_zone": "One of the selected boxes is already a receiver in {conflict}'s zone. Remove it there first.",
       "is_receiver_in_zone": "{box} is itself a receiver in {conflict}'s zone, so it can't be a sender.",
       "box_is_receiver": "{box} is set up as a multiroom receiver in moOde. Set it to sender in moOde's Multiroom settings first.",
-      "not_receiver": "{conflict} doesn't have the multiroom receiver enabled in moOde. Turn it on in that box's moOde Multiroom settings first."
+      "not_receiver": "{conflict} doesn't have the multiroom receiver enabled in moOde. Turn it on in that box's moOde Multiroom settings first.",
+      "zone_range": "Quietest must be lower than loudest.",
+      "zone_no_amp": "This box has no amplifier linked: choose one under Amplifier first."
     },
     "abort": {
       "no_stations": "Couldn't read radio stations from this moOde box. Check it's online."
@@ -184,6 +189,14 @@
       "options": {
         "receiver": "Receiver (a room in a zone)",
         "sender": "Sender"
+      }
+    },
+    "zone_follow": {
+      "options": {
+        "auto": "Auto",
+        "box": "Box (its own volume)",
+        "amp": "Amplifier",
+        "none": "Don't follow"
       }
     }
   },
