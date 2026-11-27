@@ -408,6 +408,7 @@ class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity, RestoreEntity):
         self._master: float = 0.5  # HA master volume, 0.0-1.0 (restored after a restart)
         self._master_muted = False
         self._joined: set[str] | None = None  # rooms in the zone at the last update
+        self._seen: set[str] = set()  # rooms that were connected at the last update
         zone_name = entry.options.get(CONF_ZONE_NAME) or f"{entry.title} zone"
         self._attr_unique_id = f"{self._box_id}_zone"
         self._attr_device_info = DeviceInfo(
@@ -461,12 +462,20 @@ class MoodeZonePlayer(_Playback, MoodeEntity, MediaPlayerEntity, RestoreEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         self._track_position()
-        # A room that joins the zone takes the master volume (not at start-up)
-        joined = {r.entry_id for r in receivers_of(self.hass, self._entry)
-                  if (c := loaded(r)) and c.data and c.data.receiver and c.data.receiver.state == "On"}
-        if self._joined is not None and self._ha_master() and (new := joined - self._joined):
+        # A room that joins the zone takes the master volume. Rooms are only compared once
+        # they've been seen connected, so nothing jumps when HA (or a box) starts up.
+        seen, joined = set(), set()
+        for r in receivers_of(self.hass, self._entry):
+            c = loaded(r)
+            if c and c.data and c.data.receiver:
+                seen.add(r.entry_id)
+                if c.data.receiver.state == "On":
+                    joined.add(r.entry_id)
+        prev_joined, prev_seen = self._joined or set(), self._seen
+        new = {r for r in joined - prev_joined if r in prev_seen}
+        if new and self._ha_master():
             self.hass.async_create_task(self._apply_master(new), "moode master volume for new rooms")
-        self._joined = joined
+        self._joined, self._seen = joined, seen
         super()._handle_coordinator_update()
 
     @property

@@ -504,6 +504,8 @@ async def test_master_volume_sets_every_room_in_the_zone(hass: HomeAssistant, mo
                                        {"entity_id": zone, "is_volume_muted": False}, blocking=True)
 
         # the office joins the zone: it takes the master volume (0-100 range: 50)
+        await hass.config_entries.async_get_entry(sender.entry_id).runtime_data.async_refresh()
+        await hass.async_block_till_done()
         set_calls.clear()
         rx["192.0.2.13"] = "On"
         await hass.config_entries.async_get_entry(office.entry_id).runtime_data.async_refresh()
