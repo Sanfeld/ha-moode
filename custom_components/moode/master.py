@@ -22,7 +22,9 @@ def follow_mode(entry: ConfigEntry, coordinator) -> str:
     mode = opt(entry, CONF_ZONE_FOLLOW)
     if mode == "auto":
         data = coordinator.data if coordinator else None
-        return "box" if data is not None and not data.fixed_volume else "none"
+        if data is None:  # not connected (yet): assume it can, so the slider doesn't flicker
+            return "box"
+        return "none" if data.fixed_volume else "box"
     if mode == "amp" and not entry.options.get(CONF_AMPLIFIER):
         return "none"
     return mode
