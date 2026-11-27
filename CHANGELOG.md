@@ -8,8 +8,8 @@
   which also suits DACs that are silent at the bottom of their scale. Rooms without volume
   of their own can follow with their amplifier instead (only while it's on), or not at
   all. A room that joins the zone takes the master volume. Mute mutes all of them
-- Dashboard: every room is its own block with its name as a heading (and a little icon
-  guessed from the name); the zone has a "Master volume · all rooms" slider
+- Dashboard: every room starts with its name as a heading (and a little icon
+  guessed from the name); the zone has a gold "Master volume · all rooms" slider
 - The actions `moode.sync_stations` and `moode.provision_multiroom` change the boxes'
   configuration, so (like the Stations panel) only Home Assistant administrators can call
   them. Automations and scripts keep working. Suggested in the Marketplace review

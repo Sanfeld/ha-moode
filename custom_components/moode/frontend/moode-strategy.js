@@ -85,13 +85,14 @@ class MoodeMusicStrategy extends HTMLElement {
     const offline = (id) => st(id)?.state === "unavailable";
     // A volume slider for a box or zone whose volume can be changed (Hardware or
     // Software volume in moOde); boxes on Fixed volume get none.
-    const volumeCards = (id, name = "Volume", icon = "mdi:volume-high") =>
+    const volumeCards = (id, name = "Volume", icon = "mdi:volume-high", color = undefined) =>
       attr(id, "supported_features") & 4
         ? [{
             type: "tile",
             entity: id,
             name,
             icon,
+            ...(color ? { color } : {}),
             hide_state: true,
             features_position: "bottom",
             features: [{ type: "media-player-volume-slider" }],
@@ -252,7 +253,7 @@ class MoodeMusicStrategy extends HTMLElement {
         cards.push(
           { type: "media-control", entity: zone.entity_id, grid_options: { columns: 12 } },
           // the zone's master volume: one slider for every room playing in the zone
-          ...volumeCards(zone.entity_id, "Master volume · all rooms", "mdi:ring"),
+          ...volumeCards(zone.entity_id, "Master volume · all rooms", "mdi:ring", "amber"),
           ...zoneButtons(zone.entity_id),
         );
         if (sender) cards.push(...ampCards(sender), ...stationCards(sender));
@@ -285,11 +286,12 @@ class MoodeMusicStrategy extends HTMLElement {
         if (n.includes(k)) return i;
       return "mdi:speaker";
     };
-    // Each room is its own block with its name as a heading, so it's clear which
-    // volume, mode and station belong to which room.
+    // All rooms in one column (so the page keeps its flow), each starting with its own
+    // name as a heading, so it's clear which volume, mode and station belong to which room.
     if (receivers.length) {
+      const cards = [{ type: "heading", heading: "Rooms", icon: "mdi:home-sound-in" }];
       for (const r of receivers) {
-        const cards = [{ type: "heading", heading: r.name, icon: roomIcon(r.name) }];
+        cards.push({ type: "heading", heading: r.name, icon: roomIcon(r.name), heading_style: "subtitle" });
         cards.push({
           type: "tile",
           entity: r.entity_id,
@@ -318,8 +320,8 @@ class MoodeMusicStrategy extends HTMLElement {
             });
         }
         cards.push(...ampCards(r));
-        musicSections.push({ type: "grid", cards });
       }
+      musicSections.push({ type: "grid", cards });
     }
 
     if (!musicSections.length)
