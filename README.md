@@ -6,6 +6,7 @@ Control your [moOde audio](https://moodeaudio.org) players and multiroom zones f
 
 [![Validate](https://github.com/Sanfeld/ha-moode/actions/workflows/validate.yml/badge.svg)](https://github.com/Sanfeld/ha-moode/actions/workflows/validate.yml)
 [![Tests](https://github.com/Sanfeld/ha-moode/actions/workflows/tests.yml/badge.svg)](https://github.com/Sanfeld/ha-moode/actions/workflows/tests.yml)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/default)
 
 [![Open your Home Assistant instance and open this repository in the Marketplace.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Sanfeld&repository=ha-moode&category=integration)
 
@@ -39,7 +40,7 @@ Control your [moOde audio](https://moodeaudio.org) players and multiroom zones f
 
 ## Install
 
-**Marketplace (recommended):** click the button above, or open *Settings → Marketplace*, search for **moOde Audio** and install. (Before it's in the catalog: *Marketplace → ⋮ → Add from link* with `https://github.com/Sanfeld/ha-moode`, type *Integration*.)
+**Marketplace (recommended):** click the button above, or open *Settings → Marketplace*, search for **moOde Audio** and install. It's part of the Marketplace's default catalog, so there's no repository to add first.
 
 **Manual:** copy `custom_components/moode` into your Home Assistant `config/custom_components/` folder and restart.
 

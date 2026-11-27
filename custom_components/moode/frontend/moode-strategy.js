@@ -85,13 +85,14 @@ class MoodeMusicStrategy extends HTMLElement {
     const offline = (id) => st(id)?.state === "unavailable";
     // A volume slider for a box or zone whose volume can be changed (Hardware or
     // Software volume in moOde); boxes on Fixed volume get none.
-    const volumeCards = (id) =>
+    const volumeCards = (id, name = "Volume", icon = "mdi:volume-high", color = undefined) =>
       attr(id, "supported_features") & 4
         ? [{
             type: "tile",
             entity: id,
-            name: "Volume",
-            icon: "mdi:volume-high",
+            name,
+            icon,
+            ...(color ? { color } : {}),
             hide_state: true,
             features_position: "bottom",
             features: [{ type: "media-player-volume-slider" }],
@@ -251,7 +252,8 @@ class MoodeMusicStrategy extends HTMLElement {
       } else {
         cards.push(
           { type: "media-control", entity: zone.entity_id, grid_options: { columns: 12 } },
-          ...volumeCards(zone.entity_id),
+          // the zone's master volume: one slider for every room playing in the zone
+          ...volumeCards(zone.entity_id, "Master volume · all rooms", "mdi:ring", "amber"),
           ...zoneButtons(zone.entity_id),
         );
         if (sender) cards.push(...ampCards(sender), ...stationCards(sender));
@@ -274,19 +276,32 @@ class MoodeMusicStrategy extends HTMLElement {
       });
     }
 
+    // a small picture per room, guessed from its name
+    const roomIcon = (name) => {
+      const n = name.toLowerCase();
+      for (const [k, i] of [["kitchen", "mdi:silverware-fork-knife"], ["living", "mdi:sofa"],
+        ["guest", "mdi:bed"], ["bed", "mdi:bed-king"], ["music", "mdi:guitar-electric"],
+        ["office", "mdi:desk"], ["bath", "mdi:shower"], ["garage", "mdi:garage"],
+        ["patio", "mdi:umbrella-beach"], ["garden", "mdi:flower"], ["dining", "mdi:table-chair"]])
+        if (n.includes(k)) return i;
+      return "mdi:speaker";
+    };
+    // All rooms in one column (so the page keeps its flow), each starting with its own
+    // name as a heading, so it's clear which volume, mode and station belong to which room.
     if (receivers.length) {
       const cards = [{ type: "heading", heading: "Rooms", icon: "mdi:home-sound-in" }];
       for (const r of receivers) {
+        cards.push({ type: "heading", heading: r.name, icon: roomIcon(r.name), heading_style: "subtitle" });
         cards.push({
           type: "tile",
           entity: r.entity_id,
-          name: r.name,
+          name: "Now playing",
           icon: "mdi:speaker",
           show_entity_picture: true,
           state_content: ["media_title", "media_artist"],
           grid_options: { columns: 12 },
         });
-        cards.push(...volumeCards(r.entity_id));
+        cards.push(...volumeCards(r.entity_id, `${r.name} volume`));
         for (const [key, name, icon] of [
           ["room_mode", "Mode", "mdi:speaker-multiple"],
           ["room_station", "Station", "mdi:radio"],

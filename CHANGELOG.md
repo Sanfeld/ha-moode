@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.6.0 (unreleased)
+
+- **Master volume** ("one volume to rule them all"): a zone whose sender has Fixed volume
+  now has a volume slider that sets every room playing in the zone. Each room spreads the
+  master's 1-100 % over its own range (box options → Volume control → quietest/loudest),
+  which also suits DACs that are silent at the bottom of their scale. Rooms without volume
+  of their own can follow with their amplifier instead (only while it's on), or not at
+  all. A room that joins the zone takes the master volume. Mute mutes all of them
+- Dashboard: every room starts with its name as a heading (and a little icon
+  guessed from the name); the zone has a gold "Master volume · all rooms" slider
+- The actions `moode.sync_stations` and `moode.provision_multiroom` change the boxes'
+  configuration, so (like the Stations panel) only Home Assistant administrators can call
+  them. Automations and scripts keep working. Suggested in the Marketplace review
+- README: moOde Audio is in the Marketplace's default catalog now
+
 ## 1.5.0 (2026-11-26)
 
 - Multiroom setup from Home Assistant: when a new box is added, choose Stand-alone, Receiver

@@ -24,6 +24,12 @@ CONF_ANN_LEAD_IN = "announce_lead_in"
 CONF_ANN_MAX = "announce_max_seconds"
 CONF_ARTIST_IMAGES = "artist_images"  # look up artist photos online (Deezer)
 CONF_AUTO_SYNC = "auto_sync_stations"  # keep the other boxes' stations the same as this box
+# How a room follows its zone's master volume: "auto" (the box, if its volume can be
+# changed), "box", "amp" (the linked amplifier's volume) or "none"; and the range of
+# the room's volume that the master's 1-100 % is spread over
+CONF_ZONE_FOLLOW = "zone_volume_follow"
+CONF_ZONE_MIN = "zone_volume_min"
+CONF_ZONE_MAX = "zone_volume_max"
 
 DEFAULTS = {
     CONF_VOLUME_MODE: "auto",
@@ -37,6 +43,9 @@ DEFAULTS = {
     CONF_ANN_MAX: 60,
     CONF_ARTIST_IMAGES: True,
     CONF_AUTO_SYNC: False,
+    CONF_ZONE_FOLLOW: "auto",
+    CONF_ZONE_MIN: 0,
+    CONF_ZONE_MAX: 100,
 }
 
 
